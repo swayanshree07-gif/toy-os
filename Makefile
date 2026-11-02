@@ -1,0 +1,75 @@
+# TernOS build. `make` builds, `make run` boots in QEMU, `make test` runs the headless test.
+
+BUILD   := build
+CC      := clang
+LD      := $(shell for l in ld.lld ld.lld-23 ld.lld-18 ld; do command -v $$l >/dev/null 2>&1 && { echo $$l; break; }; done)
+OVMF    ?= $(firstword $(wildcard /usr/share/ovmf/OVMF.fd /usr/share/qemu/OVMF.fd))
+QEMU    ?= qemu-system-x86_64
+
+CFLAGS  := --target=x86_64-elf -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
+           -fno-builtin -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mcmodel=kernel -mno-80387 \
+           -O2 -g -Wall -Wextra -Werror -Ikernel/include
+ASFLAGS := --target=x86_64-elf -g -Ikernel/include
+LDFLAGS := -nostdlib -static -z max-page-size=0x1000 -T kernel/linker.ld
+
+C_SRCS  := $(shell find kernel -name '*.c')
+S_SRCS  := $(shell find kernel -name '*.S')
+GEN_SRCS := $(BUILD)/gen/font.c
+OBJS    := $(patsubst %,$(BUILD)/%.o,$(S_SRCS) $(C_SRCS)) $(BUILD)/gen/font.c.o
+KERNEL  := $(BUILD)/ternos.elf
+
+QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
+               -device isa-debug-exit,iobase=0xf4,iosize=0x04
+
+.PHONY: all run run-headless test clean
+all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
+
+$(BUILD)/%.c.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/gen/font.c: tools/font.txt tools/mkfont.py
+	@mkdir -p $(dir $@)
+	python3 tools/mkfont.py $< $@
+
+$(BUILD)/gen/font.c.o: $(BUILD)/gen/font.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/%.S.o: %.S
+	@mkdir -p $(dir $@)
+	$(CC) $(ASFLAGS) -MMD -MP -c $< -o $@
+
+$(KERNEL): $(OBJS) kernel/linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+
+# GRUB is only available as x86_64-efi here and mtools is missing, so instead of an
+# ISO we build a standalone GRUB EFI binary (config + kernel in its memdisk) and boot
+# it from a QEMU vvfat "EFI system partition" directory under OVMF.
+$(BUILD)/grub-%.cfg: boot/grub.cfg
+	@mkdir -p $(BUILD)
+	sed 's/@CMDLINE@/$(if $(filter test,$*),test,)/' $< > $@
+
+$(BUILD)/esp/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-run.cfg
+	@mkdir -p $(dir $@)
+	grub-mkstandalone -O x86_64-efi -o $@ \
+	    "boot/grub/grub.cfg=$(BUILD)/grub-run.cfg" "boot/ternos.elf=$(KERNEL)"
+
+$(BUILD)/esp-test/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-test.cfg
+	@mkdir -p $(dir $@)
+	grub-mkstandalone -O x86_64-efi -o $@ \
+	    "boot/grub/grub.cfg=$(BUILD)/grub-test.cfg" "boot/ternos.elf=$(KERNEL)"
+
+run: all
+	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/esp -serial stdio
+
+run-headless: all
+	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/esp \
+	    -display none -serial stdio
+
+test: $(BUILD)/esp-test/EFI/BOOT/BOOTX64.EFI
+	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)
+
+clean:
+	rm -rf $(BUILD)
+
+-include $(OBJS:.o=.d)

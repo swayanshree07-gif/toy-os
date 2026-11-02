@@ -1,0 +1,10 @@
+# One marker per line; each must appear in the serial log of a test boot.
+# Lines may be regular expressions (grep -E).
+TernOS [0-9.]+ booting
+\[TEST\] boot: long mode ok
+\[TEST\] mb2: [0-9]+ tags, mmap [0-9]+ entries, [0-9]+ MiB usable
+\[TEST\] mb2: framebuffer [0-9]+x[0-9]+x32
+\[TEST\] gdt ok
+\[TEST\] kprintf ok
+\[TEST\] fb: console ok
+\[TEST\] all done
