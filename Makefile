@@ -22,6 +22,7 @@ QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
                -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
 .PHONY: all run run-headless test clean
+.SECONDARY:
 all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
 
 $(BUILD)/%.c.o: %.c
@@ -45,19 +46,27 @@ $(KERNEL): $(OBJS) kernel/linker.ld
 # GRUB is only available as x86_64-efi here and mtools is missing, so instead of an
 # ISO we build a standalone GRUB EFI binary (config + kernel in its memdisk) and boot
 # it from a QEMU vvfat "EFI system partition" directory under OVMF.
-$(BUILD)/grub-%.cfg: boot/grub.cfg
+# Kernel command lines per image: "run" (make run), "test" (make test) and crash-* images
+# used by the negative tests in tests/run_tests.sh.
+CMDLINE_run      :=
+CMDLINE_test     := test kbd
+CMDLINE_crash-pf := test crash=pf
+CMDLINE_crash-df := test crash=df
+TEST_IMAGES := test crash-pf crash-df
+
+$(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	@mkdir -p $(BUILD)
-	sed 's/@CMDLINE@/$(if $(filter test,$*),test,)/' $< > $@
+	sed 's/@CMDLINE@/$(CMDLINE_$*)/' $< > $@
 
 $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-run.cfg
 	@mkdir -p $(dir $@)
 	grub-mkstandalone -O x86_64-efi -o $@ \
 	    "boot/grub/grub.cfg=$(BUILD)/grub-run.cfg" "boot/ternos.elf=$(KERNEL)"
 
-$(BUILD)/esp-test/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-test.cfg
+$(BUILD)/esp-%/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-%.cfg
 	@mkdir -p $(dir $@)
 	grub-mkstandalone -O x86_64-efi -o $@ \
-	    "boot/grub/grub.cfg=$(BUILD)/grub-test.cfg" "boot/ternos.elf=$(KERNEL)"
+	    "boot/grub/grub.cfg=$(BUILD)/grub-$*.cfg" "boot/ternos.elf=$(KERNEL)"
 
 run: all
 	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/esp -serial stdio
@@ -66,7 +75,7 @@ run-headless: all
 	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/esp \
 	    -display none -serial stdio
 
-test: $(BUILD)/esp-test/EFI/BOOT/BOOTX64.EFI
+test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI)
 	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)
 
 clean:

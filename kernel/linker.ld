@@ -12,6 +12,10 @@ SECTIONS
     }
     .rodata : ALIGN(4K) {
         *(.rodata .rodata.*)
+        . = ALIGN(8);
+        __extable_start = .;
+        KEEP(*(.extable))
+        __extable_end = .;
     }
     .data : ALIGN(4K) {
         *(.data .data.*)

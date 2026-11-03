@@ -1,0 +1,6 @@
+# Unhandled kernel page fault: register dump with CR2, then panic.
+\*\*\* CPU EXCEPTION
+vector 14 \(page fault\) error 2
+cr2 00007fff00000000
+page fault: not-present write kernel
+KERNEL PANIC: unhandled exception 14 \(page fault\)

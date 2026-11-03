@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 1)
+## Status (Day 2)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -12,9 +12,16 @@ Working:
 - **Framebuffer text console** (1024x768x32 GOP framebuffer, 85x38 cells, scrolling) with an
   original 5x8 bitmap font drawn from pixel art in `tools/font.txt`
 - **GDT + TSS** (layout ready for `syscall`/`sysret`, IST stack for double faults), `panic`, `kassert`
-- Automated headless boot test (`make test`)
+- **IDT** with 256 assembly entry stubs, full register dump on unhandled exceptions,
+  double faults on their own IST stack, and an **exception fixup table** (`.extable`) so
+  kernel code can probe memory safely (used later for user-pointer checks)
+- **8259 PIC** remapped to vectors 32–47 (spurious IRQ 7/15 handled), **PIT** at 100 Hz,
+  tick counter, `sleep_ms`, TSC rate measured with polled PIT channel 2
+- **PS/2 keyboard** (8042 init, scancode set 1 → ASCII, Shift / Caps Lock / Ctrl, ring buffer)
+- Automated headless boot tests (`make test`), including negative crash tests and
+  keystrokes typed through the QEMU monitor
 
-Not yet: interrupts, timer, keyboard, memory management, tasks, user mode, filesystem, shell.
+Not yet: memory management, tasks, user mode, filesystem, shell.
 
 ## Requirements
 
@@ -48,11 +55,19 @@ exits QEMU through the `isa-debug-exit` device (status 33 = pass, 35 = panic/fai
 `tests/run_tests.sh` checks the exit status and every regex in `tests/expected.txt` against
 the serial log (`build/serial-test.log`). Each new feature adds a marker there.
 
+During the test boot the QEMU monitor is on stdin: once the kernel prints
+`[TEST] kbd: waiting`, the script types `hi T!<enter>` with `sendkey`.
+
+Negative tests: for every `tests/crash-<name>.txt` the script also boots the image
+`build/esp-crash-<name>` (kernel cmdline `test crash=<name>`), which must panic (exit 35)
+and print every marker in that file — e.g. an unhandled page fault must show CR2 and the
+register dump, and a double fault must be reported from the IST stack.
+
 ## Layout
 
 ```
-kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS
-kernel/drivers/       serial, framebuffer, text console
+kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs
+kernel/drivers/       serial, framebuffer, text console, PIC, PIT, PS/2 keyboard
 kernel/lib/           string functions, kprintf
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser

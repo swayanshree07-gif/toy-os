@@ -1,0 +1,5 @@
+# #PF with an unmapped stack escalates to #DF, handled on the IST1 stack.
+crash test: double fault
+vector 8 \(double fault\)
+rsp 00007fff00001000
+KERNEL PANIC: unhandled exception 8 \(double fault\)
