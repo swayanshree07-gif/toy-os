@@ -1,0 +1,5 @@
+# Unbounded recursion in a kernel thread hits its guard page -> #DF on IST1, diagnosed.
+crash test: kernel stack overflow
+vector 8 \(double fault\)
+kernel stack overflow in thread [0-9]+ 'deep-recursion' \(guard page ffffff[0-9a-f]+ hit\)
+KERNEL PANIC: unhandled exception 8 \(double fault\)

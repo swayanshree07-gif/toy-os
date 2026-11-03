@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 3)
+## Status (Day 4)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -28,10 +28,16 @@ Working:
   NX and global pages enabled, no identity map (NULL dereferences fault)
 - **Kernel heap**: `kmalloc` / `kzalloc` / `kfree` with boundary tags, an explicit free list,
   immediate coalescing, double-free/corruption detection, grows by mapping new pages
+- **Kernel threads**: 16 KiB kernel stacks with an unmapped guard page (overflow is diagnosed
+  by the double-fault handler), assembly context switch, `thread_create` / `yield` / `exit` /
+  `join` / `sleep_ms`, dead stacks freed right after the switch away
+- **Preemptive round-robin scheduler** driven by the PIT (20 ms quantum), idle thread,
+  sorted sleep list, TSS `rsp0` updated on every switch
+- **Synchronisation**: wait queues, IRQ-safe spinlocks, mutexes, counting semaphores
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: tasks/scheduler, user mode, system calls, filesystem, ELF loader, shell.
+Not yet: APIC timer, user mode, system calls, filesystem, ELF loader, shell.
 
 ## Requirements
 
@@ -66,7 +72,7 @@ so every boot (`make run`, `make test`, `tools/screenshot.sh`) uses a throwaway 
 |---|---|
 | `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space (later); unmapped in the kernel |
 | `0xFFFF800000000000` + phys | direct map of physical memory, 0 .. max(4 GiB, top of RAM) |
-| `0xFFFFFF0000000000` | kernel dynamic mappings (tests, later kernel stacks) |
+| `0xFFFFFF0000000000` | kernel dynamic mappings (mm tests; thread stacks from +1 GiB, each below a guard page) |
 | `0xFFFFFF1000000000` | kernel heap (up to 1 GiB, grows on demand) |
 | `0xFFFFFFFF80100000` | kernel image (physical 1 MiB) |
 
@@ -85,14 +91,17 @@ Negative tests: for every `tests/crash-<name>.txt` the script also boots the ima
 `build/esp-crash-<name>` (kernel cmdline `test crash=<name>`), which must panic (exit 35)
 and print every marker in that file — e.g. an unhandled page fault must show CR2 and the
 register dump, a double fault must be reported from the IST stack, a NULL read must fault
-(no identity map) and a double `kfree` must be caught.
+(no identity map), a double `kfree` must be caught, and unbounded recursion in a kernel
+thread must hit its stack guard page and be reported as a stack overflow.
 
 ## Layout
 
 ```
-kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs
+kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs,
+                      switch.S (context switch)
 kernel/drivers/       serial, framebuffer, text console, PIC, PIT, PS/2 keyboard
 kernel/lib/           string functions, kprintf
+kernel/sched/         sched.c (threads, scheduler, wait queues), sync.c (locks), self-tests
 kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_selftest.c
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser

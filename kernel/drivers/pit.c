@@ -3,6 +3,7 @@
 #include "io.h"
 #include "idt.h"
 #include "pic.h"
+#include "sched.h"
 
 #define PIT_FREQ 1193182u
 
@@ -12,6 +13,7 @@ static unsigned tick_hz = TIMER_HZ;
 static void pit_irq(struct regs *r) {
     (void)r;
     ticks++;
+    sched_tick(ticks);
 }
 
 void pit_init(unsigned hz) {
@@ -28,6 +30,7 @@ uint64_t timer_ticks(void) { return ticks; }
 uint64_t timer_ms(void) { return ticks * 1000 / tick_hz; }
 
 void sleep_ms(uint64_t ms) {
+    if (sched_active()) { thread_sleep_ms(ms); return; }
     uint64_t target = ticks + (ms * tick_hz + 999) / 1000;
     while (ticks < target) __asm__ volatile("hlt");
 }

@@ -54,7 +54,8 @@ CMDLINE_crash-pf := test crash=pf
 CMDLINE_crash-df := test crash=df
 CMDLINE_crash-null := test crash=null
 CMDLINE_crash-kfree := test crash=kfree
-TEST_IMAGES := test crash-pf crash-df crash-null crash-kfree
+CMDLINE_crash-stackovf := test crash=stackovf
+TEST_IMAGES := test crash-pf crash-df crash-null crash-kfree crash-stackovf
 
 $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	@mkdir -p $(BUILD)

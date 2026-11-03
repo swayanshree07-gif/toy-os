@@ -19,6 +19,7 @@
 #include "vmm.h"
 #include "selftest.h"
 #include "heap.h"
+#include "sched.h"
 
 bool g_test_mode;
 
@@ -194,6 +195,16 @@ static void test_timer(void) {
     kprintf("[TEST] pit: sleep_ms(120) -> %lu ms\n", slept);
 }
 
+/* ---- crash test: unbounded recursion must hit the thread's stack guard page ---- */
+static volatile uint64_t recurse_limit = ~0ull;   /* volatile: opaque to the compiler */
+static uint64_t recurse(uint64_t n) {
+    volatile char pad[256];
+    pad[0] = (char)n;
+    if (n >= recurse_limit) return 0;
+    return recurse(n + 1) + pad[0];
+}
+static void recurse_thread(void *arg) { (void)arg; recurse(0); }
+
 /* ---- Day 6: keyboard (the harness types "hi T!<enter>" via QEMU sendkey) ---- */
 static void test_keyboard(void) {
     char line[32];
@@ -286,6 +297,17 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     irq_enable();
     kprintf("pic remapped, pit at %u Hz, interrupts on\n", TIMER_HZ);
     if (g_test_mode) test_timer();
+
+    sched_init();
+    kprintf("scheduler: main thread adopted, idle thread created\n");
+    if (g_test_mode) test_sched();
+    sched_set_preempt(true);
+    if (strstr(bi.cmdline, "crash=stackovf")) {
+        kprintf("crash test: kernel stack overflow\n");
+        struct thread *t = thread_create("deep-recursion", recurse_thread, NULL);
+        kassert(t);
+        thread_join(t);
+    }
 
     bool have_kbd = kbd_init();
     kprintf("keyboard: %s\n", have_kbd ? "ps/2 ready" : "no 8042 controller");

@@ -5,6 +5,7 @@
 #include "kprintf.h"
 #include "extable.h"
 #include "pic.h"
+#include "sched.h"
 
 struct idt_gate {
     uint16_t off_lo, sel;
@@ -90,12 +91,18 @@ void isr_dispatch(struct regs *r) {
         if (pic_is_spurious(irq)) return;
         pic_eoi(irq);      /* EOI first: a handler may switch tasks and not return soon */
         if (handlers[v]) handlers[v](r);
+        sched_irq_exit();  /* may switch threads; we come back here when rescheduled */
         return;
     }
     if (handlers[v]) { handlers[v](r); return; }
     if (v < 32) {
         if ((v == 13 || v == 14) && (r->cs & 3) == 0 && extable_fixup(r)) return;
         kprintf("\n*** CPU EXCEPTION\n");
+        if (v == 8) {
+            uint64_t cr2;
+            __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+            sched_check_stack_overflow(cr2);
+        }
         regs_dump(r);
         panic("unhandled exception %lu (%s) at %lx", v, exception_name(v), r->rip);
     }
