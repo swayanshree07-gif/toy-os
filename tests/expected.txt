@@ -10,6 +10,11 @@ TernOS [0-9.]+ booting
 \[TEST\] idt: divide error caught
 \[TEST\] idt: page fault fixed up \(cr2=7fff00000000\)
 \[TEST\] idt: #GP fixed up, valid probe ok
+\[TEST\] pmm ok: [0-9]+ frames free \([0-9]+ MiB\), exhausted and refilled
+\[TEST\] vmm: kernel at ffffffff801[0-9a-f]+ \(phys 1[0-9a-f]+\), direct map ok
+\[TEST\] vmm ok: map/alias/translate/unmap, identity map gone
+\[TEST\] vmm: W\^X and NX enforced
+\[TEST\] heap ok: 4000 random ops, [0-9]+ live at end, [0-9]+ KiB mapped, fully coalesced
 \[TEST\] pit: 50 ticks in [0-9]+ ms
 \[TEST\] pit: sleep_ms\(120\) -> [0-9]+ ms
 \[TEST\] kbd: got 'hi T!'

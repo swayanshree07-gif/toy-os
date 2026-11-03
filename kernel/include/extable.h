@@ -11,5 +11,6 @@
 struct extable_entry { uint64_t insn, fixup; };
 /* Test helpers (extable_test.S). Return the value read, or -1 / 1 on fault. */
 long probe_read64(const void *addr, uint64_t *out);   /* 0 ok, -1 fault */
+long probe_write64(void *addr, uint64_t value);        /* 0 ok, -1 fault */
 #endif
 #endif

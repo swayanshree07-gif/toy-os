@@ -1,14 +1,16 @@
 /* Linear framebuffer (from the Multiboot2 framebuffer tag, UEFI GOP underneath). */
 #include "fb.h"
 #include "string.h"
+#include "mm.h"
 
 struct framebuffer g_fb;
 
 bool fb_init(const struct mb2_tag_framebuffer *tag) {
     if (!tag || tag->fb_type != 1 || tag->bpp != 32) return false;
-    /* Identity-mapped for now (boot page tables cover the first 4 GiB). */
+    /* Reached through the direct map; the boot page tables cover the first 4 GiB and
+     * vmm_init() keeps at least that much mapped. */
     if (tag->addr + (uint64_t)tag->pitch * tag->height > (1ull << 32)) return false;
-    g_fb.base = (uint8_t *)(uintptr_t)tag->addr;
+    g_fb.base = (uint8_t *)phys_to_virt(tag->addr);
     g_fb.width = tag->width;
     g_fb.height = tag->height;
     g_fb.pitch = tag->pitch;

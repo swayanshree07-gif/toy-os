@@ -34,17 +34,21 @@ boot() {
     local log="$BUILD/serial-$img.log" fail=0
     echo "== $img"
     rm -f "$log"
+    # QEMU's vvfat write-back corrupts files when OVMF writes NvVars to the ESP, so
+    # every boot gets a throwaway copy of the pristine build output.
+    local esp="$BUILD/boot-esp-$img"
+    rm -rf "$esp" && cp -r "$BUILD/esp-$img" "$esp"
     local status
     if [ "$keys" = 1 ]; then
         # shellcheck disable=SC2086
         feed_keys "$log" | timeout 60 ${QEMU:-qemu-system-x86_64} $QEMU_COMMON \
-            -drive format=raw,file=fat:rw:"$BUILD/esp-$img" \
+            -drive format=raw,file=fat:rw:"$esp" \
             -display none -serial file:"$log" -monitor stdio > "$BUILD/monitor-$img.log"
         status=${PIPESTATUS[1]}
     else
         # shellcheck disable=SC2086
         timeout 60 ${QEMU:-qemu-system-x86_64} $QEMU_COMMON \
-            -drive format=raw,file=fat:rw:"$BUILD/esp-$img" \
+            -drive format=raw,file=fat:rw:"$esp" \
             -display none -serial file:"$log" -monitor none
         status=$?
     fi

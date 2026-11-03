@@ -38,8 +38,13 @@ struct mb2_tag_framebuffer {
 
 struct mb2_tag_module { uint32_t type, size, mod_start, mod_end; char cmdline[]; };
 
-/* Parsed summary of everything the kernel cares about. */
+#define MB2_MAX_MODULES 8
+struct boot_module { uint64_t start, end; const char *cmdline; };   /* physical [start,end) */
+
+/* Parsed summary of everything the kernel cares about. Pointers are virtual (direct map). */
 struct boot_info {
+    uint64_t info_phys;                 /* the Multiboot2 info block itself (physical) */
+    uint32_t info_size;
     const char *cmdline;
     const char *bootloader;
     struct mb2_mmap_entry *mmap;
@@ -47,9 +52,11 @@ struct boot_info {
     uint64_t usable_bytes;
     struct mb2_tag_framebuffer *fb;
     uint32_t module_count;
+    struct boot_module modules[MB2_MAX_MODULES];
     uint32_t tag_count;
 };
 
-int mb2_parse(uint32_t magic, uintptr_t info_addr, struct boot_info *out);
+/* info_phys: physical address passed by the bootloader in EBX. */
+int mb2_parse(uint32_t magic, uint64_t info_phys, struct boot_info *out);
 
 #endif

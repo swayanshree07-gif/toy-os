@@ -52,7 +52,9 @@ CMDLINE_run      :=
 CMDLINE_test     := test kbd
 CMDLINE_crash-pf := test crash=pf
 CMDLINE_crash-df := test crash=df
-TEST_IMAGES := test crash-pf crash-df
+CMDLINE_crash-null := test crash=null
+CMDLINE_crash-kfree := test crash=kfree
+TEST_IMAGES := test crash-pf crash-df crash-null crash-kfree
 
 $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	@mkdir -p $(BUILD)
@@ -68,11 +70,17 @@ $(BUILD)/esp-%/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-%.cfg
 	grub-mkstandalone -O x86_64-efi -o $@ \
 	    "boot/grub/grub.cfg=$(BUILD)/grub-$*.cfg" "boot/ternos.elf=$(KERNEL)"
 
+# QEMU's vvfat write-back can corrupt BOOTX64.EFI when OVMF writes NvVars to the ESP,
+# so QEMU always gets a fresh throwaway copy (build/boot-esp) of the pristine build/esp.
+BOOT_ESP := rm -rf $(BUILD)/boot-esp && cp -r $(BUILD)/esp $(BUILD)/boot-esp
+
 run: all
-	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/esp -serial stdio
+	$(BOOT_ESP)
+	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp -serial stdio
 
 run-headless: all
-	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/esp \
+	$(BOOT_ESP)
+	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp \
 	    -display none -serial stdio
 
 test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI)

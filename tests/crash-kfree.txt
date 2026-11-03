@@ -1,0 +1,3 @@
+# Freeing the same heap block twice must be detected.
+crash test: double kfree
+KERNEL PANIC: kfree: double free of 0xffffff10[0-9a-f]+

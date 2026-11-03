@@ -14,6 +14,11 @@
 #include "pic.h"
 #include "timer.h"
 #include "keyboard.h"
+#include "mm.h"
+#include "pmm.h"
+#include "vmm.h"
+#include "selftest.h"
+#include "heap.h"
 
 bool g_test_mode;
 
@@ -257,6 +262,23 @@ void kmain(uint32_t magic, uint32_t info_addr) {
         /* #PF with an unusable stack -> #DF, which runs on the IST1 stack */
         kprintf("crash test: double fault\n");
         __asm__ volatile("movq $0x7FFF00001000, %rsp; pushq $0");
+    }
+
+    pmm_init(&bi);
+    vmm_init(&bi);
+    heap_init();
+    if (g_test_mode) { test_pmm(); test_vmm(); test_heap(); }
+    if (strstr(bi.cmdline, "crash=kfree")) {
+        kprintf("crash test: double kfree\n");
+        void *p = kmalloc(32);
+        kfree(p);
+        kfree(p);
+    }
+    if (strstr(bi.cmdline, "crash=null")) {
+        /* NULL-pointer read: the lower half is unmapped once vmm_init() has run */
+        kprintf("crash test: null pointer read\n");
+        volatile uint64_t *volatile p = (volatile uint64_t *)0x18;
+        (void)*p;
     }
 
     pic_init();

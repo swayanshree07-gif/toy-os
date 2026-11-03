@@ -13,3 +13,13 @@ probe_read64:
 2:  movq $-1, %rax
     ret
     EXTABLE_ENTRY(1b, 2b)
+
+/* long probe_write64(void *addr, uint64_t value): 0 ok, -1 on fault */
+    .global probe_write64
+probe_write64:
+1:  movq %rsi, (%rdi)
+    xorl %eax, %eax
+    ret
+2:  movq $-1, %rax
+    ret
+    EXTABLE_ENTRY(1b, 2b)

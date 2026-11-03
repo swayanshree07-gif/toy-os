@@ -1,0 +1,6 @@
+# NULL dereference after vmm_init: the identity map is gone, so this page-faults.
+crash test: null pointer read
+vector 14 \(page fault\) error 0
+cr2 0000000000000018
+page fault: not-present read kernel
+KERNEL PANIC: unhandled exception 14 \(page fault\)
