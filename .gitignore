@@ -13,3 +13,4 @@ node_modules/
 *.pt
 *.safetensors
 *.onnx
+Personal/
