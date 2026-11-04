@@ -4,8 +4,9 @@
 #include "kernel.h"
 #include "kprintf.h"
 #include "extable.h"
-#include "pic.h"
+#include "irq.h"
 #include "sched.h"
+#include "ksyms.h"
 
 struct idt_gate {
     uint16_t off_lo, sel;
@@ -34,7 +35,7 @@ static const char *const exc_names[32] = {
 
 const char *exception_name(uint64_t v) {
     if (v < 32) return exc_names[v];
-    if (v >= IRQ_BASE && v < IRQ_BASE + 16) return "IRQ";
+    if (v >= IRQ_VEC_FIRST && v <= IRQ_VEC_LAST) return "IRQ";
     return "interrupt";
 }
 
@@ -86,10 +87,8 @@ void regs_dump(const struct regs *r) {
 
 void isr_dispatch(struct regs *r) {
     uint64_t v = r->vector;
-    if (v >= IRQ_BASE && v < IRQ_BASE + 16) {
-        unsigned irq = v - IRQ_BASE;
-        if (pic_is_spurious(irq)) return;
-        pic_eoi(irq);      /* EOI first: a handler may switch tasks and not return soon */
+    if (v >= IRQ_VEC_FIRST && v <= IRQ_VEC_LAST) {
+        if (!irq_ack(v)) return;   /* EOI first: a handler may switch tasks and not return soon */
         if (handlers[v]) handlers[v](r);
         sched_irq_exit();  /* may switch threads; we come back here when rescheduled */
         return;
@@ -104,6 +103,8 @@ void isr_dispatch(struct regs *r) {
             sched_check_stack_overflow(cr2);
         }
         regs_dump(r);
+        backtrace_print(r->rip, r->rbp);
+        g_panic_backtrace_done = true;
         panic("unhandled exception %lu (%s) at %lx", v, exception_name(v), r->rip);
     }
     kprintf("unexpected interrupt vector %lu\n", v);

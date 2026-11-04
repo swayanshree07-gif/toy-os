@@ -28,6 +28,10 @@ SECTIONS
         __extable_start = .;
         KEEP(*(.extable))
         __extable_end = .;
+        . = ALIGN(8);
+        __ktests_start = .;
+        KEEP(*(.ktests))
+        __ktests_end = .;
     }
     . = ALIGN(4K);
     __rodata_end = .;

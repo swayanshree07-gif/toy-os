@@ -4,7 +4,11 @@
 
 #define TIMER_HZ 100
 
-void pit_init(unsigned hz);           /* PIT channel 0, IRQ 0 */
+/* Start the system tick at hz: LAPIC timer in APIC mode, else PIT channel 0 (IRQ 0).
+ * Needs irq_init() first. */
+void timer_init(unsigned hz);
+const char *timer_source(void);       /* "lapic" or "pit" */
+uint32_t timer_lapic_counts(void);    /* LAPIC timer counts per tick (0 if not used) */
 uint64_t timer_ticks(void);
 uint64_t timer_ms(void);
 void sleep_ms(uint64_t ms);           /* hlt-waits; needs interrupts enabled */

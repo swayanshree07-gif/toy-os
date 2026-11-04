@@ -4,3 +4,4 @@ vector 14 \(page fault\) error 0
 cr2 0000000000000018
 page fault: not-present read kernel
 KERNEL PANIC: unhandled exception 14 \(page fault\)
+#0 ffffffff80[0-9a-f]+ kmain\+0x[0-9a-f]+

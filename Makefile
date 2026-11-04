@@ -8,6 +8,7 @@ QEMU    ?= qemu-system-x86_64
 
 CFLAGS  := --target=x86_64-elf -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
            -fno-builtin -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mcmodel=kernel -mno-80387 \
+           -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -fno-optimize-sibling-calls \
            -O2 -g -Wall -Wextra -Werror -Ikernel/include
 ASFLAGS := --target=x86_64-elf -g -Ikernel/include
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000 -T kernel/linker.ld
@@ -25,7 +26,7 @@ QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
 .SECONDARY:
 all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
 
-$(BUILD)/%.c.o: %.c
+$(BUILD)/%.c.o: %.c Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -33,15 +34,32 @@ $(BUILD)/gen/font.c: tools/font.txt tools/mkfont.py
 	@mkdir -p $(dir $@)
 	python3 tools/mkfont.py $< $@
 
-$(BUILD)/gen/font.c.o: $(BUILD)/gen/font.c
+$(BUILD)/gen/%.c.o: $(BUILD)/gen/%.c Makefile
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BUILD)/%.S.o: %.S
+# Symbol table: pass 1 links with an empty table, pass 2 with the symbols of pass 1.
+NM := $(shell for n in llvm-nm llvm-nm-23 nm; do command -v $$n >/dev/null 2>&1 && { echo $$n; break; }; done)
+$(BUILD)/gen/ksyms0.c: tools/mksyms.py
+	@mkdir -p $(dir $@)
+	python3 tools/mksyms.py < /dev/null > $@
+
+$(BUILD)/ternos-pass1.elf: $(OBJS) $(BUILD)/gen/ksyms0.c.o kernel/linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(BUILD)/gen/ksyms0.c.o
+
+$(BUILD)/gen/ksyms.c: $(BUILD)/ternos-pass1.elf tools/mksyms.py
+	$(NM) -n $< | python3 tools/mksyms.py > $@
+
+$(BUILD)/%.S.o: %.S Makefile
 	@mkdir -p $(dir $@)
 	$(CC) $(ASFLAGS) -MMD -MP -c $< -o $@
 
-$(KERNEL): $(OBJS) kernel/linker.ld
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+$(KERNEL): $(OBJS) $(BUILD)/gen/ksyms.c.o kernel/linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) $(BUILD)/gen/ksyms.c.o
+	@# code addresses must not move between the passes, or the table would be wrong
+	@$(NM) -n $(BUILD)/ternos-pass1.elf | grep -i ' t ' > $(BUILD)/syms-pass1.txt
+	@$(NM) -n $@ | grep -i ' t ' > $(BUILD)/syms-pass2.txt
+	@cmp -s $(BUILD)/syms-pass1.txt $(BUILD)/syms-pass2.txt || \
+	    { echo "error: text symbols moved between link passes"; rm -f $@; exit 1; }
 
 # GRUB is only available as x86_64-efi here and mtools is missing, so instead of an
 # ISO we build a standalone GRUB EFI binary (config + kernel in its memdisk) and boot
@@ -50,12 +68,14 @@ $(KERNEL): $(OBJS) kernel/linker.ld
 # used by the negative tests in tests/run_tests.sh.
 CMDLINE_run      :=
 CMDLINE_test     := test kbd
+CMDLINE_test-pic := test kbd noapic
 CMDLINE_crash-pf := test crash=pf
 CMDLINE_crash-df := test crash=df
 CMDLINE_crash-null := test crash=null
 CMDLINE_crash-kfree := test crash=kfree
 CMDLINE_crash-stackovf := test crash=stackovf
-TEST_IMAGES := test crash-pf crash-df crash-null crash-kfree crash-stackovf
+CMDLINE_crash-panic := test crash=panic
+TEST_IMAGES := test test-pic crash-pf crash-df crash-null crash-kfree crash-stackovf crash-panic
 
 $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	@mkdir -p $(BUILD)

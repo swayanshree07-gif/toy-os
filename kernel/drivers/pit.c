@@ -1,31 +1,49 @@
-/* 8253/8254 programmable interval timer: channel 0 drives the system tick. */
+/* 8253/8254 programmable interval timer and the system tick.
+ * The tick comes from PIT channel 0 (IRQ 0) in PIC mode, or from the local APIC timer
+ * (calibrated against PIT channel 2) in APIC mode. */
 #include "timer.h"
 #include "io.h"
 #include "idt.h"
-#include "pic.h"
+#include "irq.h"
+#include "kprintf.h"
 #include "sched.h"
 
 #define PIT_FREQ 1193182u
 
 static volatile uint64_t ticks;
 static unsigned tick_hz = TIMER_HZ;
+static const char *source = "none";
+static uint32_t lapic_counts;
 
-static void pit_irq(struct regs *r) {
+static void tick_irq(struct regs *r) {
     (void)r;
     ticks++;
     sched_tick(ticks);
 }
 
-void pit_init(unsigned hz) {
-    tick_hz = hz;
+static void pit_start(unsigned hz) {
     uint32_t div = (PIT_FREQ + hz / 2) / hz;
     outb(0x43, 0x36);                 /* channel 0, lo/hi byte, mode 3 (square wave) */
     outb(0x40, div & 0xFF);
     outb(0x40, div >> 8);
-    isr_set_handler(IRQ_BASE + 0, pit_irq);
-    pic_unmask(0);
+    isr_set_handler(IRQ_VEC_FIRST + 0, tick_irq);
+    irq_unmask(0);
 }
 
+void timer_init(unsigned hz) {
+    tick_hz = hz;
+    if (irq_mode() == IRQ_MODE_APIC) {
+        isr_set_handler(IRQ_VEC_LAPIC_TIMER, tick_irq);
+        lapic_counts = lapic_timer_start(hz);
+        if (lapic_counts) { source = "lapic"; return; }
+        kprintf("timer: lapic calibration failed, using the PIT\n");
+    }
+    pit_start(hz);
+    source = "pit";
+}
+
+const char *timer_source(void) { return source; }
+uint32_t timer_lapic_counts(void) { return lapic_counts; }
 uint64_t timer_ticks(void) { return ticks; }
 uint64_t timer_ms(void) { return ticks * 1000 / tick_hz; }
 

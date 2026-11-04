@@ -54,6 +54,14 @@ int mb2_parse(uint32_t magic, uint64_t info_phys, struct boot_info *out) {
         case MB2_TAG_FRAMEBUFFER:
             out->fb = (struct mb2_tag_framebuffer *)tag;
             break;
+        case MB2_TAG_ACPI_OLD:
+        case MB2_TAG_ACPI_NEW:
+            /* prefer the ACPI 2.0+ RSDP (tag 15) if both are present */
+            if (!out->rsdp || tag->type == MB2_TAG_ACPI_NEW) {
+                out->rsdp = (const void *)(p + 8);
+                out->rsdp_len = tag->size - 8;
+            }
+            break;
         default:
             break;
         }

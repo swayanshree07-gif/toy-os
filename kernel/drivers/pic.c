@@ -54,3 +54,7 @@ bool pic_is_spurious(unsigned irq) {
 }
 
 uint64_t pic_spurious_count(void) { return spurious; }
+
+uint16_t pic_get_masks(void) { return (uint16_t)(inb(PIC2_DATA) << 8 | inb(PIC1_DATA)); }
+
+void pic_disable(void) { outb(PIC1_DATA, 0xFF); outb(PIC2_DATA, 0xFF); }

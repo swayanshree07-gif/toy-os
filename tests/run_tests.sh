@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Boot TernOS headless under QEMU+OVMF and check the serial log.
-#  1. The "test" image: kernel self-tests must pass (exit 33) and every marker in
-#     tests/expected.txt must appear.
+#  1. Positive images "test" (APIC mode) and "test-pic" (cmdline "noapic": legacy 8259 +
+#     PIT): kernel self-tests must pass (exit 33) and every marker in tests/expected.txt
+#     plus tests/pass-<image>.txt must appear.
 #  2. Negative tests: each tests/crash-<name>.txt boots build/esp-crash-<name>; the kernel
 #     must panic (exit 35) and print every marker in that file.
 set -u
@@ -74,7 +75,10 @@ boot() {
     fi
 }
 
-boot test 33 "$here/expected.txt" 0 1
+for img in test test-pic; do
+    cat "$here/expected.txt" "$here/pass-$img.txt" > "$BUILD/markers-$img.txt"
+    boot "$img" 33 "$BUILD/markers-$img.txt" 0 1
+done
 for f in "$here"/crash-*.txt; do
     name=$(basename "$f" .txt)
     boot "$name" 35 "$f" 1

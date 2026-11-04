@@ -6,7 +6,8 @@
  *   0x0000000000000000 - 0x00007FFFFFFFFFFF   user space (Day 15+); unmapped in the kernel
  *   0xFFFF800000000000 - ...                  HHDM: direct map of physical memory
  *                                             (0 .. max(4 GiB, top of RAM), 2 MiB pages, NX)
- *   0xFFFFFF0000000000 - 0xFFFFFF0FFFFFFFFF   kernel dynamic mappings: tests below +1 GiB,
+ *   0xFFFFFF0000000000 - 0xFFFFFF0FFFFFFFFF   kernel dynamic mappings: tests below +512 MiB,
+ *                                             uncached device MMIO +512 MiB..+1 GiB,
  *                                             thread stacks (guard page + 16 KiB) from +1 GiB
  *   0xFFFFFF1000000000 + 1 GiB max            kernel heap (kmalloc)
  *   0xFFFFFFFF80000000 + 1 MiB                kernel image (text RX, rodata R, data/bss RW)

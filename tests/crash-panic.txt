@@ -1,0 +1,6 @@
+# A deliberate panic two calls deep: the backtrace must name every caller.
+KERNEL PANIC: crash test: deliberate panic \(x=42\)
+backtrace:
+#0 ffffffff80[0-9a-f]+ panic_level2\+0x[0-9a-f]+
+#1 ffffffff80[0-9a-f]+ panic_level1\+0x[0-9a-f]+
+#2 ffffffff80[0-9a-f]+ kmain\+0x[0-9a-f]+

@@ -53,6 +53,8 @@ struct boot_info {
     struct mb2_tag_framebuffer *fb;
     uint32_t module_count;
     struct boot_module modules[MB2_MAX_MODULES];
+    const void *rsdp;                   /* ACPI RSDP copy from tag 14/15 (or NULL) */
+    uint32_t rsdp_len;
     uint32_t tag_count;
 };
 

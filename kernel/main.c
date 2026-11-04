@@ -12,6 +12,8 @@
 #include "idt.h"
 #include "extable.h"
 #include "pic.h"
+#include "irq.h"
+#include "acpi.h"
 #include "timer.h"
 #include "keyboard.h"
 #include "mm.h"
@@ -20,6 +22,8 @@
 #include "selftest.h"
 #include "heap.h"
 #include "sched.h"
+#include "ksyms.h"
+#include "ktest.h"
 
 bool g_test_mode;
 
@@ -27,13 +31,25 @@ void qemu_exit(int code) {
     outl(0xF4, (uint32_t)code);
 }
 
+bool g_panic_backtrace_done;
+
 void panic(const char *fmt, ...) {
+    static bool panicking;
+    irq_disable();
+    if (panicking) {                      /* a fault while reporting a panic: give up */
+        kprintf("\n*** nested panic\n");
+        if (g_test_mode) qemu_exit(QEMU_EXIT_FAILURE);
+        cpu_halt_forever();
+    }
+    panicking = true;
     char buf[256];
     va_list ap;
     va_start(ap, fmt);
     kvsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
     kprintf("\n*** KERNEL PANIC: %s\n", buf);
+    if (!g_panic_backtrace_done)
+        backtrace_print(0, (uint64_t)__builtin_frame_address(0));
     if (g_test_mode) qemu_exit(QEMU_EXIT_FAILURE);
     cpu_halt_forever();
 }
@@ -185,14 +201,38 @@ static void test_timer(void) {
     t0 = rdtsc();
     while (timer_ticks() < start + 50) __asm__ volatile("hlt");
     uint64_t ms = (rdtsc() - t0) / (tsc_per_ms ? tsc_per_ms : 1);
-    if (ms < 400 || ms > 600) panic("pit: 50 ticks took %lu ms by TSC (expected ~500)", ms);
-    kprintf("[TEST] pit: 50 ticks in %lu ms\n", ms);
+    if (ms < 400 || ms > 600) panic("timer: 50 ticks took %lu ms by TSC (expected ~500)", ms);
+    kprintf("[TEST] timer: 50 ticks in %lu ms\n", ms);
 
     uint64_t before = timer_ms();
     sleep_ms(120);
     uint64_t slept = timer_ms() - before;
     if (slept < 120 || slept > 140) panic("sleep_ms(120) took %lu ms", slept);
-    kprintf("[TEST] pit: sleep_ms(120) -> %lu ms\n", slept);
+    kprintf("[TEST] timer: sleep_ms(120) -> %lu ms\n", slept);
+}
+
+/* ---- Day 13: ACPI MADT, APIC vs PIC mode ---- */
+static void test_irq_mode(void) {
+    const struct madt_info *m = acpi_madt();
+    if (acpi_table_count()) {
+        if (!m->valid) panic("acpi: no MADT");
+        kprintf("[TEST] acpi: %u tables, madt: %u cpu(s), %u ioapic(s), lapic %lx, "
+                "%u isa overrides, irq0->gsi%u\n", acpi_table_count(), m->cpu_count,
+                m->ioapic_count, m->lapic_phys, m->overrides, m->isa_gsi[0]);
+    }
+    uint16_t masks = pic_get_masks();
+    if (irq_mode() == IRQ_MODE_APIC) {
+        if (masks != 0xFFFF) panic("apic mode but 8259 masks are %x", masks);
+        uint32_t c = timer_lapic_counts();
+        if (strcmp(timer_source(), "lapic") || !c) panic("apic mode without lapic timer");
+        kprintf("[TEST] apic: lapic id %u ver %x, ioapic %u pins, 8259 fully masked\n",
+                lapic_id(), lapic_version(), ioapic_pins());
+        kprintf("[TEST] timer source: lapic (%u counts/tick at div 16)\n", c);
+    } else {
+        if (strcmp(timer_source(), "pit")) panic("pic mode but timer is %s", timer_source());
+        if (masks & 1) panic("pic mode but IRQ0 masked (%x)", masks);
+        kprintf("[TEST] timer source: pit (8259 masks %x)\n", masks);
+    }
 }
 
 /* ---- crash test: unbounded recursion must hit the thread's stack guard page ---- */
@@ -204,6 +244,15 @@ static uint64_t recurse(uint64_t n) {
     return recurse(n + 1) + pad[0];
 }
 static void recurse_thread(void *arg) { (void)arg; recurse(0); }
+
+/* ---- crash test: a panic two calls deep must print a symbolised backtrace ---- */
+__attribute__((noinline)) static void panic_level2(int x) {
+    panic("crash test: deliberate panic (x=%d)", x);
+}
+__attribute__((noinline)) static void panic_level1(int x) {
+    panic_level2(x + 1);
+    __asm__ volatile("");
+}
 
 /* ---- Day 6: keyboard (the harness types "hi T!<enter>" via QEMU sendkey) ---- */
 static void test_keyboard(void) {
@@ -292,11 +341,12 @@ void kmain(uint32_t magic, uint32_t info_addr) {
         (void)*p;
     }
 
-    pic_init();
-    pit_init(TIMER_HZ);
+    irq_init(&bi, !strstr(bi.cmdline, "noapic"));
+    timer_init(TIMER_HZ);
     irq_enable();
-    kprintf("pic remapped, pit at %u Hz, interrupts on\n", TIMER_HZ);
-    if (g_test_mode) test_timer();
+    kprintf("interrupts on: %s mode, tick %u Hz from %s\n",
+            irq_mode() == IRQ_MODE_APIC ? "apic" : "pic", TIMER_HZ, timer_source());
+    if (g_test_mode) { test_irq_mode(); test_timer(); }
 
     sched_init();
     kprintf("scheduler: main thread adopted, idle thread created\n");
@@ -308,6 +358,12 @@ void kmain(uint32_t magic, uint32_t info_addr) {
         kassert(t);
         thread_join(t);
     }
+
+    if (g_test_mode) {
+        int nf = ktest_run_all();
+        if (nf) panic("selftest: %d unit test(s) failed", nf);
+    }
+    if (strstr(bi.cmdline, "crash=panic")) panic_level1(41);
 
     bool have_kbd = kbd_init();
     kprintf("keyboard: %s\n", have_kbd ? "ps/2 ready" : "no 8042 controller");

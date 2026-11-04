@@ -16,5 +16,7 @@ __attribute__((noreturn, format(printf, 1, 2))) void panic(const char *fmt, ...)
     do { if (!(cond)) panic("assertion failed: %s (%s:%d)", #cond, __FILE__, __LINE__); } while (0)
 
 extern bool g_test_mode;
+/* Set by the exception handler after printing the faulting context's backtrace. */
+extern bool g_panic_backtrace_done;
 
 #endif

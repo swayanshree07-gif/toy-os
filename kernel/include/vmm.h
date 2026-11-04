@@ -32,6 +32,9 @@ bool vmm_unmap(uint64_t pml4, uint64_t va, uint64_t *old_pa);
 /* Translate a virtual address (any page size); flags gets the leaf entry's flags. */
 bool vmm_translate(uint64_t pml4, uint64_t va, uint64_t *pa, uint64_t *flags);
 
+/* Map device registers (uncached, NX) into the kernel MMIO window; NULL on failure. */
+void *vmm_map_mmio(uint64_t pa, uint64_t size);
+
 static inline uint64_t read_cr3(void) {
     uint64_t v;
     __asm__ volatile("mov %%cr3, %0" : "=r"(v));

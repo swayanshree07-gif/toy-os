@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 4)
+## Status (Day 5 session; plan Days 1–14 done)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -34,10 +34,19 @@ Working:
 - **Preemptive round-robin scheduler** driven by the PIT (20 ms quantum), idle thread,
   sorted sleep list, TSS `rsp0` updated on every switch
 - **Synchronisation**: wait queues, IRQ-safe spinlocks, mutexes, counting semaphores
+- **ACPI** (minimal): RSDP from the Multiboot2 tag, XSDT/RSDT walk with checksums, MADT
+  parsing (CPUs, I/O APICs, ISA interrupt source overrides, LAPIC address)
+- **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
+  I/O APIC (honouring MADT overrides/polarity), and the **LAPIC timer** (calibrated against
+  PIT channel 2) drives the 100 Hz tick. Kernel cmdline `noapic` falls back to 8259 + PIT
+- **Debugging aids**: frame pointers everywhere, a symbol table embedded by a two-pass link,
+  symbolised **backtraces** on every panic and unhandled exception
+- **In-kernel unit tests**: `KTEST(name) { KEXPECT(...); }` anywhere in the kernel registers a
+  test in the `.ktests` section; they all run in test mode
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: APIC timer, user mode, system calls, filesystem, ELF loader, shell.
+Not yet: user mode, system calls, filesystem, ELF loader, shell.
 
 ## Requirements
 
@@ -72,7 +81,7 @@ so every boot (`make run`, `make test`, `tools/screenshot.sh`) uses a throwaway 
 |---|---|
 | `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space (later); unmapped in the kernel |
 | `0xFFFF800000000000` + phys | direct map of physical memory, 0 .. max(4 GiB, top of RAM) |
-| `0xFFFFFF0000000000` | kernel dynamic mappings (mm tests; thread stacks from +1 GiB, each below a guard page) |
+| `0xFFFFFF0000000000` | kernel dynamic mappings (mm tests below +512 MiB; uncached device MMIO +512 MiB..+1 GiB; thread stacks from +1 GiB, each below a guard page) |
 | `0xFFFFFF1000000000` | kernel heap (up to 1 GiB, grows on demand) |
 | `0xFFFFFFFF80100000` | kernel image (physical 1 MiB) |
 
@@ -84,7 +93,11 @@ exits QEMU through the `isa-debug-exit` device (status 33 = pass, 35 = panic/fai
 `tests/run_tests.sh` checks the exit status and every regex in `tests/expected.txt` against
 the serial log (`build/serial-test.log`). Each new feature adds a marker there.
 
-During the test boot the QEMU monitor is on stdin: once the kernel prints
+There are two positive test images: `test` (APIC mode) and `test-pic` (cmdline
+`test kbd noapic`, legacy 8259 + PIT); each must also match `tests/pass-<image>.txt`.
+Both run the in-kernel unit tests (`[TEST] selftest N/N passed`).
+
+During each positive test boot the QEMU monitor is on stdin: once the kernel prints
 `[TEST] kbd: waiting`, the script types `hi T!<enter>` with `sendkey`.
 
 Negative tests: for every `tests/crash-<name>.txt` the script also boots the image
@@ -92,20 +105,23 @@ Negative tests: for every `tests/crash-<name>.txt` the script also boots the ima
 and print every marker in that file — e.g. an unhandled page fault must show CR2 and the
 register dump, a double fault must be reported from the IST stack, a NULL read must fault
 (no identity map), a double `kfree` must be caught, and unbounded recursion in a kernel
-thread must hit its stack guard page and be reported as a stack overflow.
+thread must hit its stack guard page and be reported as a stack overflow, and a deliberate
+panic two calls deep must print a backtrace naming every caller.
 
 ## Layout
 
 ```
 kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs,
-                      switch.S (context switch)
-kernel/drivers/       serial, framebuffer, text console, PIC, PIT, PS/2 keyboard
-kernel/lib/           string functions, kprintf
+                      switch.S (context switch), acpi.c (RSDP/XSDT/MADT), apic.c (LAPIC, I/O APIC)
+kernel/drivers/       serial, framebuffer, text console, irq.c (PIC/APIC selection), PIC,
+                      PIT + system tick, PS/2 keyboard
+kernel/lib/           string functions, kprintf, ksyms.c (symbols, backtraces), ktest.c
+kernel/selftest/      KTEST unit tests
 kernel/sched/         sched.c (threads, scheduler, wait queues), sync.c (locks), self-tests
 kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_selftest.c
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
-tools/                font source + generator, screenshot script
+tools/                font source + generator, mksyms.py (symbol table), screenshot script
 tests/                headless test runner and expected markers
 ```

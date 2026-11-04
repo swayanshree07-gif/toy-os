@@ -1,0 +1,2 @@
+# extra markers for the "noapic" test image (legacy 8259 PIC + PIT tick)
+\[TEST\] timer source: pit \(8259 masks [0-9a-f]+\)

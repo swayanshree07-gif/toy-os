@@ -1,0 +1,3 @@
+# extra markers for the APIC-mode test image
+\[TEST\] apic: lapic id 0 ver [0-9a-f]+, ioapic 24 pins, 8259 fully masked
+\[TEST\] timer source: lapic \([0-9]+ counts/tick at div 16\)

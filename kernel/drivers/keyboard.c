@@ -3,7 +3,7 @@
 #include "keyboard.h"
 #include "io.h"
 #include "idt.h"
-#include "pic.h"
+#include "irq.h"
 #include "timer.h"
 
 #define KBD_DATA 0x60
@@ -94,7 +94,7 @@ bool kbd_init(void) {
     ctl_cmd(0xAE);                                      /* enable port 1 */
     head = tail = 0;
     isr_set_handler(IRQ_BASE + 1, kbd_irq);
-    pic_unmask(1);
+    irq_unmask(1);
     return true;
 }
 

@@ -159,3 +159,21 @@ void vmm_init(const struct boot_info *bi) {
     kprintf("vmm: kernel PML4 at %lx, direct map %lu MiB, nx %s\n", kernel_pml4, top >> 20,
             nx_mask ? "on" : "off");
 }
+
+/* ---- device MMIO: uncached 4 KiB mappings in KMAP_BASE + 512 MiB .. +1 GiB ---- */
+#define MMIO_AREA (KMAP_BASE + (512ull << 20))
+#define MMIO_END  (KMAP_BASE + (1ull << 30))
+static uint64_t mmio_next = MMIO_AREA;
+
+void *vmm_map_mmio(uint64_t pa, uint64_t size) {
+    uint64_t off = pa & (PAGE_SIZE - 1);
+    uint64_t pages = ALIGN_UP(off + size, PAGE_SIZE) / PAGE_SIZE;
+    if (mmio_next + pages * PAGE_SIZE > MMIO_END) return NULL;
+    uint64_t va = mmio_next;
+    for (uint64_t i = 0; i < pages; i++)
+        if (vmm_map(kernel_pml4, va + i * PAGE_SIZE, ALIGN_DOWN(pa, PAGE_SIZE) + i * PAGE_SIZE,
+                    VMM_KERNEL_RW | PTE_PCD | PTE_PWT))
+            return NULL;
+    mmio_next += pages * PAGE_SIZE;
+    return (void *)(va + off);
+}
