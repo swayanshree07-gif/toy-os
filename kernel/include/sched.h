@@ -30,8 +30,11 @@ struct thread {
     uint64_t switches;             /* times switched in */
     struct waitq { struct thread *head, *tail; } joiners;
     bool boot_stack;               /* main thread: stack not ours to free */
+    uint64_t cr3;                  /* address space (kernel PML4 for kernel threads) */
+    struct process *proc;          /* owning user process, NULL for kernel threads */
 };
 
+struct process;
 typedef void (*thread_fn)(void *arg);
 
 void sched_init(void);             /* adopt the running boot context as thread "main" */

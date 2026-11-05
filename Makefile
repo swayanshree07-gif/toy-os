@@ -81,15 +81,24 @@ $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	@mkdir -p $(BUILD)
 	sed 's/@CMDLINE@/$(CMDLINE_$*)/' $< > $@
 
-$(BUILD)/esp/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-run.cfg
-	@mkdir -p $(dir $@)
-	grub-mkstandalone -O x86_64-efi -o $@ \
-	    "boot/grub/grub.cfg=$(BUILD)/grub-run.cfg" "boot/ternos.elf=$(KERNEL)"
+# Initrd: everything under initrd/ packed by tools/mkinitrd.py (own "TRD" format).
+INITRD := $(BUILD)/initrd.img
+INITRD_FILES := $(shell find initrd -type f)
+$(INITRD): $(INITRD_FILES) tools/mkinitrd.py
+	@mkdir -p $(BUILD)
+	python3 tools/mkinitrd.py initrd $@
 
-$(BUILD)/esp-%/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(BUILD)/grub-%.cfg
+$(BUILD)/esp/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(INITRD) $(BUILD)/grub-run.cfg
 	@mkdir -p $(dir $@)
 	grub-mkstandalone -O x86_64-efi -o $@ \
-	    "boot/grub/grub.cfg=$(BUILD)/grub-$*.cfg" "boot/ternos.elf=$(KERNEL)"
+	    "boot/grub/grub.cfg=$(BUILD)/grub-run.cfg" "boot/ternos.elf=$(KERNEL)" \
+	    "boot/initrd.img=$(INITRD)"
+
+$(BUILD)/esp-%/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(INITRD) $(BUILD)/grub-%.cfg
+	@mkdir -p $(dir $@)
+	grub-mkstandalone -O x86_64-efi -o $@ \
+	    "boot/grub/grub.cfg=$(BUILD)/grub-$*.cfg" "boot/ternos.elf=$(KERNEL)" \
+	    "boot/initrd.img=$(INITRD)"
 
 # QEMU's vvfat write-back can corrupt BOOTX64.EFI when OVMF writes NvVars to the ESP,
 # so QEMU always gets a fresh throwaway copy (build/boot-esp) of the pristine build/esp.

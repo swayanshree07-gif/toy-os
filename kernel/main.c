@@ -24,6 +24,8 @@
 #include "sched.h"
 #include "ksyms.h"
 #include "ktest.h"
+#include "proc.h"
+#include "initrd.h"
 
 bool g_test_mode;
 
@@ -328,6 +330,8 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     vmm_init(&bi);
     heap_init();
     if (g_test_mode) { test_pmm(); test_vmm(); test_heap(); }
+    initrd_init(&bi);
+    if (g_test_mode) test_initrd();
     if (strstr(bi.cmdline, "crash=kfree")) {
         kprintf("crash test: double kfree\n");
         void *p = kmalloc(32);
@@ -352,6 +356,8 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     kprintf("scheduler: main thread adopted, idle thread created\n");
     if (g_test_mode) test_sched();
     sched_set_preempt(true);
+    syscall_init();
+    if (g_test_mode) test_user();
     if (strstr(bi.cmdline, "crash=stackovf")) {
         kprintf("crash test: kernel stack overflow\n");
         struct thread *t = thread_create("deep-recursion", recurse_thread, NULL);

@@ -36,4 +36,11 @@ void gdt_init(void) {
     __asm__ volatile("ltr %w0" : : "r"((uint16_t)GDT_TSS));
 }
 
-void tss_set_kernel_stack(uint64_t rsp0) { g_tss.rsp[0] = rsp0; }
+/* Kernel stack for ring-3 -> ring-0 transitions: the CPU takes it from TSS.rsp0 for
+ * interrupts; syscall_entry (usermode.S) loads g_syscall_kstack itself. */
+uint64_t g_syscall_kstack;
+
+void tss_set_kernel_stack(uint64_t rsp0) {
+    g_tss.rsp[0] = rsp0;
+    g_syscall_kstack = rsp0;
+}

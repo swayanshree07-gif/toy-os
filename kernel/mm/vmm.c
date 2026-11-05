@@ -177,3 +177,69 @@ void *vmm_map_mmio(uint64_t pa, uint64_t size) {
     mmio_next += pages * PAGE_SIZE;
     return (void *)(va + off);
 }
+
+/* ---- user address spaces ---- */
+uint64_t vmm_new_space(void) {
+    uint64_t pml4 = pmm_alloc_zeroed();
+    if (!pml4) return 0;
+    uint64_t *dst = phys_to_virt(pml4), *src = phys_to_virt(kernel_pml4);
+    for (int i = 256; i < 512; i++) dst[i] = src[i];
+    return pml4;
+}
+
+/* Free a lower-half table at `level` (2 = PDPT, 1 = PD, 0 = PT) and everything below. */
+static void free_table(uint64_t table_pa, int level) {
+    uint64_t *t = phys_to_virt(table_pa);
+    for (int i = 0; i < 512; i++) {
+        if (!(t[i] & PTE_P)) continue;
+        kassert(!(t[i] & PTE_PS));         /* user space only uses 4 KiB pages */
+        if (level > 0) free_table(t[i] & PTE_ADDR, level - 1);
+        else pmm_free(t[i] & PTE_ADDR);
+    }
+    pmm_free(table_pa);
+}
+
+void vmm_destroy_space(uint64_t pml4) {
+    kassert(pml4 != kernel_pml4 && !is_current(pml4));
+    uint64_t *t = phys_to_virt(pml4);
+    for (int i = 0; i < 256; i++)
+        if (t[i] & PTE_P) free_table(t[i] & PTE_ADDR, 2);
+    pmm_free(pml4);
+}
+
+int vmm_map_user_pages(uint64_t pml4, uint64_t va, uint64_t pages, uint64_t flags) {
+    for (uint64_t i = 0; i < pages; i++) {
+        uint64_t a = va + i * PAGE_SIZE;
+        if (a >= USER_TOP || a < va) return -1;
+        uint64_t pa = pmm_alloc_zeroed();
+        if (!pa) return -2;
+        int rc = vmm_map(pml4, a, pa, flags | PTE_U);
+        if (rc) { pmm_free(pa); return rc; }
+    }
+    return 0;
+}
+
+bool vmm_user_range_ok(uint64_t pml4, uint64_t va, uint64_t len, bool write) {
+    if (len == 0) return true;
+    if (va >= USER_TOP || len > USER_TOP - va) return false;
+    for (uint64_t p = ALIGN_DOWN(va, PAGE_SIZE); p < va + len; p += PAGE_SIZE) {
+        uint64_t fl;
+        if (!vmm_translate(pml4, p, NULL, &fl)) return false;
+        if (!(fl & PTE_U) || (write && !(fl & PTE_W))) return false;
+    }
+    return true;
+}
+
+static uint64_t count_table(uint64_t table_pa, int level) {
+    uint64_t *t = phys_to_virt(table_pa), n = 0;
+    for (int i = 0; i < 512; i++)
+        if (t[i] & PTE_P) n += level ? count_table(t[i] & PTE_ADDR, level - 1) : 1;
+    return n;
+}
+
+uint64_t vmm_user_pages(uint64_t pml4) {
+    uint64_t *t = phys_to_virt(pml4), n = 0;
+    for (int i = 0; i < 256; i++)
+        if (t[i] & PTE_P) n += count_table(t[i] & PTE_ADDR, 2);
+    return n;
+}

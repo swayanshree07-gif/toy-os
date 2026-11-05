@@ -1,0 +1,5 @@
+TernOS initrd
+
+Files in this directory are packed into build/initrd.img by
+tools/mkinitrd.py and loaded by GRUB as a Multiboot2 module.
+User programs will live in bin/ once the ELF loader exists (Day 19).

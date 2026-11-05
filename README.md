@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 5 session; plan Days 1–14 done)
+## Status (Day 6 session; plan Days 1–17 done)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -43,10 +43,22 @@ Working:
   symbolised **backtraces** on every panic and unhandled exception
 - **In-kernel unit tests**: `KTEST(name) { KEXPECT(...); }` anywhere in the kernel registers a
   test in the `.ktests` section; they all run in test mode
+- **User mode (ring 3)**: per-process address spaces (lower half private, kernel half shared),
+  `iretq` entry with zeroed registers, TSS `rsp0` / CR3 switched by the scheduler, user code
+  pages read+execute and stack NX; ring-3 threads are preempted by the timer like any other
+- **System calls** via `syscall`/`sysret` (EFER.SCE, STAR/LSTAR/SFMASK): `exit`, `write`,
+  `getpid`, `yield`, `sleep_ms`, `uptime_ms` (Linux-style register ABI, see
+  `kernel/include/syscall_nr.h`); user pointers are checked against the page tables
+  (`-EFAULT`), bad fds / unknown calls return `-EBADF` / `-ENOSYS`
+- **Fault isolation**: an exception in ring 3 is reported and kills only that process
+  (exit code 128 + vector); its address space and frames are freed
+- **Initrd**: GRUB loads `build/initrd.img` as a Multiboot2 module; own "TRD" archive format
+  (`tools/mkinitrd.py` packs `initrd/`), validated entry by entry with a CRC-32 per file
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: user mode, system calls, filesystem, ELF loader, shell.
+Not yet: VFS / RAM filesystem, ELF loader (user programs are still flat code blobs in
+`kernel/user/blobs.S`), user libc, shell.
 
 ## Requirements
 
@@ -79,7 +91,7 @@ so every boot (`make run`, `make test`, `tools/screenshot.sh`) uses a throwaway 
 
 | Virtual address | Contents |
 |---|---|
-| `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space (later); unmapped in the kernel |
+| `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space, private per process (unmapped in kernel threads): program at `0x400000`, 16 KiB stack below `0x7FFFFFFFE000` |
 | `0xFFFF800000000000` + phys | direct map of physical memory, 0 .. max(4 GiB, top of RAM) |
 | `0xFFFFFF0000000000` | kernel dynamic mappings (mm tests below +512 MiB; uncached device MMIO +512 MiB..+1 GiB; thread stacks from +1 GiB, each below a guard page) |
 | `0xFFFFFF1000000000` | kernel heap (up to 1 GiB, grows on demand) |
@@ -112,16 +124,20 @@ panic two calls deep must print a backtrace naming every caller.
 
 ```
 kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs,
-                      switch.S (context switch), acpi.c (RSDP/XSDT/MADT), apic.c (LAPIC, I/O APIC)
+                      switch.S (context switch), usermode.S (iretq to ring 3, syscall entry), acpi.c (RSDP/XSDT/MADT), apic.c (LAPIC, I/O APIC)
 kernel/drivers/       serial, framebuffer, text console, irq.c (PIC/APIC selection), PIC,
                       PIT + system tick, PS/2 keyboard
 kernel/lib/           string functions, kprintf, ksyms.c (symbols, backtraces), ktest.c
 kernel/selftest/      KTEST unit tests
 kernel/sched/         sched.c (threads, scheduler, wait queues), sync.c (locks), self-tests
+kernel/proc/          proc.c (processes, ring-3 entry, user faults), syscall.c, self-tests
+kernel/user/          blobs.S: flat ring-3 test programs (until the ELF loader)
+kernel/fs/            initrd.c (TRD archive parser, CRC-32), self-tests
 kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_selftest.c
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
-tools/                font source + generator, mksyms.py (symbol table), screenshot script
+initrd/               files packed into the initrd image
+tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot script
 tests/                headless test runner and expected markers
 ```

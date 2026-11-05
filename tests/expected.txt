@@ -28,3 +28,11 @@ TernOS [0-9.]+ booting
 \[TEST\] sync: mutex counter 300, [0-9]+ contended locks
 \[TEST\] sync ok: producer/consumer 2x1000 items, sum [0-9]+, spinlock irq-safe
 \[TEST\] selftest ([0-9]+)/\1 passed
+\[TEST\] ring3 ok: ran at cpl 3 \(cs=23 ss=1b\), user stack ok, #UD at 40[0-9a-f]+ trapped and killed
+\[TEST\] syscall write ok: hello from ring 3
+\[TEST\] syscall ok: getpid [0-9]+, write, sleep_ms, regs preserved, exit 10[0-9]+
+\[TEST\] syscall bad args rejected: EFAULT x3, EBADF, ENOSYS
+\[TEST\] user faults isolated: #GP, kernel read #PF, code write #PF killed
+\[TEST\] user preempt ok: 2 ring-3 spinners in [0-9]+ ms, [0-9]+/[0-9]+ irqs in ring 3, [0-9]+/[0-9]+ switches
+\[TEST\] user processes freed: address spaces and frames back to baseline
+\[TEST\] initrd: 3 files, [0-9]+ bytes of data, /etc/motd ok, crc32 verified

@@ -10,6 +10,7 @@
 #include "kernel.h"
 #include "kprintf.h"
 #include "string.h"
+#include "proc.h"
 
 extern void context_switch(uint64_t *save_rsp, uint64_t new_rsp);
 extern char thread_entry[];
@@ -85,6 +86,8 @@ static void make_ready(struct thread *t) {
 /* Runs on the new thread's stack right after every switch. */
 static void finish_switch(void) {
     if (dead_stack_owner) {
+        /* we are on another thread's stack and address space now */
+        if (dead_stack_owner->proc) proc_thread_reaped(dead_stack_owner);
         kstack_free(dead_stack_owner);
         dead_stack_owner = NULL;
     }
@@ -109,6 +112,7 @@ static void schedule(void) {
     next->switches++;
     stats.switches++;
     tss_set_kernel_stack(next->stack_top);
+    if ((read_cr3() & PTE_ADDR) != next->cr3) write_cr3(next->cr3);
     context_switch(&prev->rsp, next->rsp);
     finish_switch();
 }
@@ -126,6 +130,7 @@ static struct thread *thread_alloc(const char *name) {
     t->tid = next_tid++;
     for (unsigned i = 0; i < sizeof t->name - 1 && name[i]; i++) t->name[i] = name[i];
     waitq_init(&t->joiners);
+    t->cr3 = vmm_kernel_pml4();
     return t;
 }
 

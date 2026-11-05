@@ -35,6 +35,25 @@ bool vmm_translate(uint64_t pml4, uint64_t va, uint64_t *pa, uint64_t *flags);
 /* Map device registers (uncached, NX) into the kernel MMIO window; NULL on failure. */
 void *vmm_map_mmio(uint64_t pa, uint64_t size);
 
+/* ---- user address spaces (Day 15) ----
+ * A user PML4 shares the kernel half (entries 256..511 point at the kernel's PDPTs);
+ * the lower half belongs to the process and every frame mapped there is owned by it. */
+#define USER_TOP 0x0000800000000000ull     /* first non-canonical lower-half address */
+uint64_t vmm_new_space(void);              /* new PML4 (physical), 0 if out of memory */
+/* Frees every user page, every lower-half page table and the PML4 itself.
+ * Must not be the current CR3. */
+void vmm_destroy_space(uint64_t pml4);
+/* Allocate, zero and map `pages` fresh frames at va with flags (PTE_U is added). */
+int vmm_map_user_pages(uint64_t pml4, uint64_t va, uint64_t pages, uint64_t flags);
+/* True if [va, va+len) lies in user space and every page is mapped present+user
+ * (and writable if `write`). len 0 is fine. */
+bool vmm_user_range_ok(uint64_t pml4, uint64_t va, uint64_t len, bool write);
+/* Number of pages mapped in the lower half (for tests/diagnostics). */
+uint64_t vmm_user_pages(uint64_t pml4);
+
+static inline void write_cr3(uint64_t v) {
+    __asm__ volatile("mov %0, %%cr3" : : "r"(v) : "memory");
+}
 static inline uint64_t read_cr3(void) {
     uint64_t v;
     __asm__ volatile("mov %%cr3, %0" : "=r"(v));

@@ -7,6 +7,7 @@
 #include "irq.h"
 #include "sched.h"
 #include "ksyms.h"
+#include "proc.h"
 
 struct idt_gate {
     uint16_t off_lo, sel;
@@ -88,6 +89,7 @@ void regs_dump(const struct regs *r) {
 void isr_dispatch(struct regs *r) {
     uint64_t v = r->vector;
     if (v >= IRQ_VEC_FIRST && v <= IRQ_VEC_LAST) {
+        if ((r->cs & 3) && proc_current()) proc_current()->user_irqs++;
         if (!irq_ack(v)) return;   /* EOI first: a handler may switch tasks and not return soon */
         if (handlers[v]) handlers[v](r);
         sched_irq_exit();  /* may switch threads; we come back here when rescheduled */
@@ -95,6 +97,7 @@ void isr_dispatch(struct regs *r) {
     }
     if (handlers[v]) { handlers[v](r); return; }
     if (v < 32) {
+        if ((r->cs & 3) == 3) proc_user_fault(r);    /* kills the process, not the kernel */
         if ((v == 13 || v == 14) && (r->cs & 3) == 0 && extable_fixup(r)) return;
         kprintf("\n*** CPU EXCEPTION\n");
         if (v == 8) {
