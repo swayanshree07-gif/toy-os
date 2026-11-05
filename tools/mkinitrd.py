@@ -7,7 +7,7 @@ Layout (all integers little-endian):
           u32 data offset (from image start, 16-aligned), u32 size, u32 crc32, u32 flags (0)
   data    each file's bytes, padded to 16
 Files are sorted by path so the image is reproducible.
-usage: mkinitrd.py <dir> <out.img>
+usage: mkinitrd.py <dir> <out.img> [path/in/initrd=host/file ...]
 """
 import os, struct, sys, zlib
 
@@ -26,6 +26,12 @@ def main():
                 sys.exit(f"mkinitrd: name too long: {rel}")
             with open(p, "rb") as f:
                 files.append((rel, f.read()))
+    for extra in sys.argv[3:]:
+        rel, src = extra.split("=", 1)
+        if len(rel.encode()) >= NAME_MAX:
+            sys.exit(f"mkinitrd: name too long: {rel}")
+        with open(src, "rb") as f:
+            files = [x for x in files if x[0] != rel] + [(rel, f.read())]
     files.sort()
     off = 16 + 64 * len(files)
     off = (off + 15) & ~15

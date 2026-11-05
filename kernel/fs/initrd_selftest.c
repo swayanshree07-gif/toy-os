@@ -22,6 +22,8 @@ void test_initrd(void) {
         panic("initrd: /etc/motd missing or wrong");
     if (initrd_find(rd, "etc/nonexistent", &f) || initrd_find(rd, "etc", &f))
         panic("initrd: found a file that does not exist");
+    if (!initrd_find(rd, "bin/hello", &f) || f.size < 64 || memcmp(f.data, "\x7f" "ELF", 4))
+        panic("initrd: bin/hello missing or not an ELF file");
     kprintf("[TEST] initrd: %u files, %u bytes of data, /etc/motd ok, crc32 verified\n",
             rd->count, bytes);
 }

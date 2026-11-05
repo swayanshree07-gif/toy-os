@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 6 session; plan Days 1–17 done)
+## Status (Day 7 session; plan Days 1–20 done)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -53,12 +53,33 @@ Working:
 - **Fault isolation**: an exception in ring 3 is reported and kills only that process
   (exit code 128 + vector); its address space and frames are freed
 - **Initrd**: GRUB loads `build/initrd.img` as a Multiboot2 module; own "TRD" archive format
-  (`tools/mkinitrd.py` packs `initrd/`), validated entry by entry with a CRC-32 per file
+  (`tools/mkinitrd.py` packs `initrd/` plus the compiled user programs as `bin/<name>`),
+  validated entry by entry with a CRC-32 per file
+- **VFS + RAM file system**: one writable tree (directories, files with growable contents,
+  device nodes `/dev/console`, `/dev/null`, `/dev/zero`); the initrd is copied into it at
+  boot. Reference-counted vnodes (unlinked files stay readable while open), `.`/`..`,
+  relative paths from a per-process cwd
+- **File descriptors**: 16 per process, 0/1/2 open on `/dev/console`; system calls `open`
+  (`O_CREAT`/`O_TRUNC`/`O_APPEND`/`O_DIRECTORY`), `close`, `read`, `write`, `lseek`,
+  `readdir`, `mkdir`, `unlink`, `stat`, `fstat`
+- **ELF64 loader**: static x86-64 executables from the VFS; headers and every `PT_LOAD`
+  segment are validated (bounds, alignment, overlap, user range, W^X, entry in an executable
+  segment) before anything is mapped; System V initial stack with `argc`/`argv`
+- **User programs in C** (`user/`): `crt0`, system-call wrappers, string functions,
+  `printf`/`snprintf`, `malloc`/`free`/`calloc`/`realloc` on top of a `brk` system call.
+  Programs: `hello`, `fstest`, `ulibtest`, `segv` (all used by the tests)
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: VFS / RAM filesystem, ELF loader (user programs are still flat code blobs in
-`kernel/user/blobs.S`), user libc, shell.
+Not yet: `spawn`/`exec`/`wait` from user space, keyboard input for user programs (TTY),
+the shell and its programs.
+
+### Adding a user program
+
+Drop `user/bin/<name>.c` (with `#include "tern.h"` and a `main(int argc, char **argv)`) into
+the tree; `make` compiles it, links it with `user/lib` at 0x400000 and packs it into the
+initrd as `/bin/<name>`. User code is built with `-mgeneral-regs-only`: the kernel does not
+save SSE/FPU state yet.
 
 ## Requirements
 
@@ -91,7 +112,7 @@ so every boot (`make run`, `make test`, `tools/screenshot.sh`) uses a throwaway 
 
 | Virtual address | Contents |
 |---|---|
-| `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space, private per process (unmapped in kernel threads): program at `0x400000`, 16 KiB stack below `0x7FFFFFFFE000` |
+| `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space, private per process (unmapped in kernel threads): program at `0x400000`, `brk` heap right after it (max 64 MiB), 16 KiB stack below `0x7FFFFFFFE000` |
 | `0xFFFF800000000000` + phys | direct map of physical memory, 0 .. max(4 GiB, top of RAM) |
 | `0xFFFFFF0000000000` | kernel dynamic mappings (mm tests below +512 MiB; uncached device MMIO +512 MiB..+1 GiB; thread stacks from +1 GiB, each below a guard page) |
 | `0xFFFFFF1000000000` | kernel heap (up to 1 GiB, grows on demand) |
@@ -130,14 +151,17 @@ kernel/drivers/       serial, framebuffer, text console, irq.c (PIC/APIC selecti
 kernel/lib/           string functions, kprintf, ksyms.c (symbols, backtraces), ktest.c
 kernel/selftest/      KTEST unit tests
 kernel/sched/         sched.c (threads, scheduler, wait queues), sync.c (locks), self-tests
-kernel/proc/          proc.c (processes, ring-3 entry, user faults), syscall.c, self-tests
-kernel/user/          blobs.S: flat ring-3 test programs (until the ELF loader)
-kernel/fs/            initrd.c (TRD archive parser, CRC-32), self-tests
+kernel/proc/          proc.c (processes, fds, argv, ring-3 entry, user faults), elf.c (ELF64
+                      loader), syscall.c, self-tests
+kernel/user/          blobs.S: flat ring-3 test programs for the low-level ring-3 tests
+kernel/fs/            initrd.c (TRD archive parser, CRC-32), vfs.c (VFS tree + RAM FS,
+                      open files), devfs.c (/dev nodes), self-tests
 kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_selftest.c
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
 initrd/               files packed into the initrd image
+user/                 user space: linker.ld, lib/ (crt0, tern.h, ulib.c, malloc.c), bin/ (programs)
 tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot script
 tests/                headless test runner and expected markers
 ```

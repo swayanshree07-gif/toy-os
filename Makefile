@@ -81,12 +81,33 @@ $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	@mkdir -p $(BUILD)
 	sed 's/@CMDLINE@/$(CMDLINE_$*)/' $< > $@
 
-# Initrd: everything under initrd/ packed by tools/mkinitrd.py (own "TRD" format).
+# User programs (Day 19): static ELF64 executables, one per user/bin/*.c, linked with
+# crt0 + the user library at 4 MiB (user/linker.ld). No SSE: the kernel does not save
+# FPU/SSE state on context switches (yet), so user code is general-registers only.
+UCFLAGS := --target=x86_64-elf -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
+           -fno-pie -fno-builtin -mgeneral-regs-only -fno-omit-frame-pointer \
+           -O2 -g -Wall -Wextra -Werror -Iuser/lib -Ikernel/include
+ULIB_OBJS := $(BUILD)/user/lib/crt0.S.o $(BUILD)/user/lib/ulib.c.o $(BUILD)/user/lib/malloc.c.o
+USER_PROGS := $(patsubst user/bin/%.c,%,$(wildcard user/bin/*.c))
+USER_BINS := $(patsubst %,$(BUILD)/user/bin/%,$(USER_PROGS))
+
+$(BUILD)/user/%.c.o: user/%.c Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(UCFLAGS) -MMD -MP -c $< -o $@
+$(BUILD)/user/%.S.o: user/%.S Makefile
+	@mkdir -p $(dir $@)
+	$(CC) $(UCFLAGS) -MMD -MP -c $< -o $@
+$(BUILD)/user/bin/%: $(BUILD)/user/bin/%.c.o $(ULIB_OBJS) user/linker.ld
+	$(LD) -nostdlib -static -z max-page-size=0x1000 -T user/linker.ld -o $@ \
+	    $(ULIB_OBJS) $<
+
+# Initrd: everything under initrd/ plus the user programs as bin/<name>, packed by
+# tools/mkinitrd.py (own "TRD" format).
 INITRD := $(BUILD)/initrd.img
 INITRD_FILES := $(shell find initrd -type f)
-$(INITRD): $(INITRD_FILES) tools/mkinitrd.py
+$(INITRD): $(INITRD_FILES) $(USER_BINS) tools/mkinitrd.py
 	@mkdir -p $(BUILD)
-	python3 tools/mkinitrd.py initrd $@
+	python3 tools/mkinitrd.py initrd $@ $(foreach p,$(USER_PROGS),bin/$(p)=$(BUILD)/user/bin/$(p))
 
 $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(INITRD) $(BUILD)/grub-run.cfg
 	@mkdir -p $(dir $@)
@@ -119,4 +140,4 @@ test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI)
 clean:
 	rm -rf $(BUILD)
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(ULIB_OBJS:.o=.d) $(USER_BINS:=.c.d)

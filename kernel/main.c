@@ -26,6 +26,7 @@
 #include "ktest.h"
 #include "proc.h"
 #include "initrd.h"
+#include "vfs.h"
 
 bool g_test_mode;
 
@@ -356,8 +357,21 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     kprintf("scheduler: main thread adopted, idle thread created\n");
     if (g_test_mode) test_sched();
     sched_set_preempt(true);
+    vfs_init();
+    devfs_init();
+    {
+        int n = vfs_populate_from_initrd();
+        struct vfs_stats vs;
+        vfs_get_stats(&vs);
+        kprintf("vfs: ramfs root, %d initrd files copied, %lu nodes\n", n, vs.nodes);
+        if (g_test_mode) {
+            const struct initrd *rd = initrd_boot();
+            if (!rd || n != (int)rd->count) panic("vfs: copied %d of %u initrd files", n, rd ? rd->count : 0);
+            test_vfs();
+        }
+    }
     syscall_init();
-    if (g_test_mode) test_user();
+    if (g_test_mode) { test_user(); test_elf(); }
     if (strstr(bi.cmdline, "crash=stackovf")) {
         kprintf("crash test: kernel stack overflow\n");
         struct thread *t = thread_create("deep-recursion", recurse_thread, NULL);

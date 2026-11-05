@@ -35,4 +35,9 @@ TernOS [0-9.]+ booting
 \[TEST\] user faults isolated: #GP, kernel read #PF, code write #PF killed
 \[TEST\] user preempt ok: 2 ring-3 spinners in [0-9]+ ms, [0-9]+/[0-9]+ irqs in ring 3, [0-9]+/[0-9]+ switches
 \[TEST\] user processes freed: address spaces and frames back to baseline
-\[TEST\] initrd: 3 files, [0-9]+ bytes of data, /etc/motd ok, crc32 verified
+\[TEST\] initrd: [0-9]+ files, [0-9]+ bytes of data, /etc/motd ok, crc32 verified
+\[TEST\] ramfs ok: files/dirs/devices, seek\+append\+holes, unlink while open, [0-9]+ nodes, no leaks
+\[TEST\] elf hello ok: hello from an ELF program, pid [0-9]+, argc 3 'one' 'two words'
+\[TEST\] user fs ok: open/read/write/lseek/readdir/stat/unlink from ring 3
+\[TEST\] elf loader ok: /bin/hello exit 42, /bin/fstest \+ /bin/ulibtest passed, /bin/segv killed, ENOENT/EACCES/ENOEXEC rejected, no frames leaked
+\[TEST\] ulibc ok: printf formats, brk, 3000 malloc/realloc/free ops, heap [0-9]+ KiB in 1 free block\(s\)
