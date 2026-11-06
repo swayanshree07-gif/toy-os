@@ -12,6 +12,7 @@
 #include "mm.h"
 #include "pmm.h"
 #include "heap.h"
+#include "tty.h"
 
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -176,10 +177,19 @@ static long sys_brk(uint64_t want) {
 #define SPAWN_ARGV_BYTES 2048
 
 /* spawn(path, argv): argv strings are copied into one kernel buffer first. */
-static long sys_spawn(uint64_t upath, uint64_t uargv) {
+static long sys_spawn(uint64_t upath, uint64_t uargv, uint64_t ufds) {
     char path[VFS_PATH_MAX];
     int rc = copy_user_str(path, upath, sizeof path);
     if (rc) return rc;
+    struct file *files[3] = { NULL, NULL, NULL };
+    if (ufds) {
+        if (!user_ok(ufds, 3 * sizeof(int), false)) return -EFAULT;
+        for (int i = 0; i < 3; i++) {
+            int fd = ((const int *)ufds)[i];
+            if (fd == -1) continue;
+            if (fd < 0 || !(files[i] = fd_get((uint64_t)fd))) return -EBADF;
+        }
+    }
     const char *argv[SPAWN_ARGV_MAX + 1];
     char *strs = kmalloc(SPAWN_ARGV_BYTES);
     if (!strs) return -ENOMEM;
@@ -199,7 +209,8 @@ static long sys_spawn(uint64_t upath, uint64_t uargv) {
     argv[argc] = NULL;
     /* no argv at all: argv[0] is the path, as a shell would pass it */
     if (argc == 0) { argv[0] = path; argv[1] = NULL; }
-    rc = proc_spawn_child(path, argv);
+    /* (the files stay referenced by our fd table while the child takes its own refs) */
+    rc = proc_spawn_child(path, argv, files);
 out:
     kfree(strs);
     return rc;
@@ -238,6 +249,44 @@ static long sys_getcwd(uint64_t ubuf, uint64_t size) {
     return n;
 }
 
+static long sys_sysinfo(uint64_t uinfo) {
+    if (!user_ok(uinfo, sizeof(struct tern_sysinfo), true)) return -EFAULT;
+    struct tern_sysinfo si;
+    memset(&si, 0, sizeof si);
+    si.uptime_ms = timer_ms();
+    si.frames_total = pmm_total_frames();
+    si.frames_free = pmm_free_frames();
+    struct heap_stats hs;
+    heap_check(&hs);
+    si.heap_mapped = hs.mapped;
+    si.heap_used = hs.used_bytes;
+    si.heap_free = hs.free_bytes;
+    si.procs = proc_live_count();
+    struct sched_stats ss;
+    sched_get_stats(&ss);
+    si.threads = ss.stacks_live;
+    si.switches = ss.switches;
+    si.preemptions = ss.preemptions;
+    struct vfs_stats vs;
+    vfs_get_stats(&vs);
+    si.vfs_nodes = vs.nodes;
+    si.vfs_bytes = vs.file_bytes;
+    memcpy((void *)uinfo, &si, sizeof si);
+    return 0;
+}
+
+#define PROCLIST_MAX 64
+static long sys_proclist(uint64_t ubuf, uint64_t max) {
+    if (max > PROCLIST_MAX) max = PROCLIST_MAX;
+    if (max && !user_ok(ubuf, max * sizeof(struct tern_procinfo), true)) return -EFAULT;
+    struct tern_procinfo *tmp = max ? kmalloc(max * sizeof *tmp) : NULL;
+    if (max && !tmp) return -ENOMEM;
+    unsigned n = proc_list(tmp, (unsigned)max);
+    if (max) memcpy((void *)ubuf, tmp, (n < max ? n : max) * sizeof *tmp);
+    kfree(tmp);
+    return n;
+}
+
 static long syscall_do(struct regs *r) {
     uint64_t a0 = r->rdi, a1 = r->rsi, a2 = r->rdx;
     switch (r->rax) {
@@ -257,7 +306,7 @@ static long syscall_do(struct regs *r) {
     case SYS_stat:      return sys_path_op(r->rax, a0, a1);
     case SYS_fstat:     return sys_fstat(a0, a1);
     case SYS_brk:       return sys_brk(a0);
-    case SYS_spawn:     return sys_spawn(a0, a1);
+    case SYS_spawn:     return sys_spawn(a0, a1, a2);
     case SYS_wait:      return sys_wait(a0, a1);
     case SYS_getppid: {
         uint64_t f = irq_save();
@@ -268,6 +317,12 @@ static long syscall_do(struct regs *r) {
     }
     case SYS_chdir:     return sys_chdir(a0);
     case SYS_getcwd:    return sys_getcwd(a0, a1);
+    case SYS_kill:
+        if ((int64_t)a0 <= 0 || a0 > 0x7fffffff) return -ESRCH;
+        return proc_kill((int)a0, TERN_EXIT_KILLED);
+    case SYS_setfg:     return tty_set_fg((int)a0);
+    case SYS_sysinfo:   return sys_sysinfo(a0);
+    case SYS_proclist:  return sys_proclist(a0, a1);
     default:            return -ENOSYS;
     }
 }
@@ -277,6 +332,7 @@ void syscall_dispatch(struct regs *r) {
     kassert(proc_current());
     irq_enable();                       /* syscalls may block and are preemptible */
     r->rax = (uint64_t)syscall_do(r);
+    proc_check_kill();                  /* kill() / Ctrl-C: exit instead of returning */
     irq_disable();
     /* sysret with a non-canonical rip would #GP in ring 0 on Intel CPUs. */
     if (r->rip >= USER_TOP) {

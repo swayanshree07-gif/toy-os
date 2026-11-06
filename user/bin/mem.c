@@ -1,0 +1,19 @@
+/* /bin/mem: physical memory, kernel heap, RAM FS and scheduler statistics. */
+#include "tern.h"
+
+int main(void) {
+    struct tern_sysinfo si;
+    int rc = sysinfo(&si);
+    if (rc) { printf("mem: error %d\n", rc); return 1; }
+    unsigned long total = si.frames_total * 4, freek = si.frames_free * 4;
+    printf("phys: %lu KiB total, %lu KiB used, %lu KiB free\n", total, total - freek, freek);
+    printf("heap: %lu KiB mapped, %lu KiB used, %lu KiB free\n",
+           (unsigned long)si.heap_mapped / 1024, (unsigned long)si.heap_used / 1024,
+           (unsigned long)si.heap_free / 1024);
+    printf("ramfs: %lu nodes, %lu bytes of file data\n", (unsigned long)si.vfs_nodes,
+           (unsigned long)si.vfs_bytes);
+    printf("sched: %lu processes, %lu threads, %lu switches, %lu preemptions\n",
+           (unsigned long)si.procs, (unsigned long)si.threads,
+           (unsigned long)si.switches, (unsigned long)si.preemptions);
+    return 0;
+}

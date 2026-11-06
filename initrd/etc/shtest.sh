@@ -13,4 +13,24 @@ nosuchprog
 uptime
 echo -n "no newline, "
 echo done
+# Day 9 session: redirection, file tools, ps/mem/kill
+mkdir /work
+echo "first line" > /work/f.txt
+echo second >>/work/f.txt
+cat /work/f.txt
+wc < /work/f.txt
+wc /work/f.txt > /work/count 2> /work/err
+cat /work/count
+ls /work
+rm /work/f.txt
+rm /work
+rm /work/count /work/err /work
+ls /work
+cat < /nowhere
+echo >
+mkdir /etc
+ps
+mem
+kill 99999
+status
 exit 5

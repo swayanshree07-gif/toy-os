@@ -24,6 +24,23 @@ static bool active, preempt_on, need_resched;
 static unsigned slice;
 static int next_tid;
 static struct sched_stats stats;
+static uint8_t fpu_initial[512] __attribute__((aligned(16)));
+
+static void fpu_init(void) {
+    uint64_t cr0, cr4;
+    __asm__ volatile("mov %%cr0, %0" : "=r"(cr0));
+    cr0 &= ~((1ull << 2) | (1ull << 3));               /* EM, TS off */
+    cr0 |= 1ull << 1;                                   /* MP */
+    __asm__ volatile("mov %0, %%cr0" : : "r"(cr0));
+    __asm__ volatile("mov %%cr4, %0" : "=r"(cr4));
+    cr4 |= (1ull << 9) | (1ull << 10);                  /* OSFXSR, OSXMMEXCPT */
+    __asm__ volatile("mov %0, %%cr4" : : "r"(cr4));
+    uint32_t mxcsr = 0x1F80;                            /* all exceptions masked */
+    __asm__ volatile("fninit; ldmxcsr %0; fxsave %1" : : "m"(mxcsr), "m"(fpu_initial));
+}
+
+static inline void fpu_save(uint8_t *area) { __asm__ volatile("fxsave (%0)" : : "r"(area) : "memory"); }
+static inline void fpu_restore(const uint8_t *area) { __asm__ volatile("fxrstor (%0)" : : "r"(area) : "memory"); }
 
 /* ---- kernel stacks: [guard page][KSTACK_PAGES pages] in the KMAP area ----
  * Virtual space is handed out by a bump pointer and never reused (64 GiB of KMAP
@@ -113,6 +130,11 @@ static void schedule(void) {
     stats.switches++;
     tss_set_kernel_stack(next->stack_top);
     if ((read_cr3() & PTE_ADDR) != next->cr3) write_cr3(next->cr3);
+    /* Kernel threads never touch the FPU, so the registers still hold the state of the
+     * last user thread that ran: save on the way out of a user thread, restore on the
+     * way into one. */
+    if (prev->proc && prev->state != T_DEAD) { fpu_save(prev->fpu); stats.fpu_saves++; }
+    if (next->proc) fpu_restore(next->fpu);
     context_switch(&prev->rsp, next->rsp);
     finish_switch();
 }
@@ -131,6 +153,9 @@ static struct thread *thread_alloc(const char *name) {
     for (unsigned i = 0; i < sizeof t->name - 1 && name[i]; i++) t->name[i] = name[i];
     waitq_init(&t->joiners);
     t->cr3 = vmm_kernel_pml4();
+    t->fpu = kmalloc(sizeof fpu_initial);
+    if (!t->fpu) { kfree(t); return NULL; }
+    memcpy(t->fpu, fpu_initial, sizeof fpu_initial);
     return t;
 }
 
@@ -141,6 +166,7 @@ static void idle_loop(void *arg) {
 
 void sched_init(void) {
     uint64_t f = irq_save();
+    fpu_init();
     struct thread *m = thread_alloc("main");
     kassert(m);
     m->state = T_RUNNING;
@@ -165,7 +191,7 @@ void sched_set_preempt(bool on) { preempt_on = on; }
 struct thread *thread_create(const char *name, thread_fn fn, void *arg) {
     struct thread *t = thread_alloc(name);
     if (!t) return NULL;
-    if (!kstack_alloc(t)) { kfree(t); return NULL; }
+    if (!kstack_alloc(t)) { kfree(t->fpu); kfree(t); return NULL; }
     /* Initial frame popped by context_switch: r15 r14 r13 r12 rbx rbp, then the
      * return address thread_entry. After that ret, rsp == stack_top (16-aligned). */
     uint64_t *sp = (uint64_t *)t->stack_top;
@@ -212,6 +238,7 @@ int thread_join(struct thread *t) {
         if (*pp == t) { *pp = t->all_next; break; }
     irq_restore(f);
     kassert(t->stack_base == 0);   /* freed by finish_switch before we could run */
+    kfree(t->fpu);
     kfree(t);
     return code;
 }
@@ -228,6 +255,18 @@ void thread_sleep_ms(uint64_t ms) {
     t->state = T_SLEEPING;
     schedule();
     irq_restore(f);
+}
+
+bool sched_wake_sleeper(struct thread *t) {
+    uint64_t f = irq_save();
+    bool found = false;
+    if (t->state == T_SLEEPING) {
+        for (struct thread **pp = &sleepers; *pp; pp = &(*pp)->next)
+            if (*pp == t) { *pp = t->next; found = true; break; }
+        if (found) make_ready(t);
+    }
+    irq_restore(f);
+    return found;
 }
 
 void sched_tick(uint64_t now) {

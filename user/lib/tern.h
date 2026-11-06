@@ -36,11 +36,17 @@ static inline void sleep_ms(uint64_t ms)                  { SC1(SYS_sleep_ms, ms
 static inline uint64_t uptime_ms(void)                    { return (uint64_t)SC0(SYS_uptime_ms); }
 static inline long brk(uintptr_t addr)                    { return SC1(SYS_brk, addr); }
 /* Day 21: processes */
-static inline int spawn(const char *path, const char *const *argv) { return (int)SC2(SYS_spawn, path, argv); }
+static inline int spawn(const char *path, const char *const *argv) { return (int)SC3(SYS_spawn, path, argv, 0); }
+/* fds[3]: our fd to give the child as its fd 0/1/2, or -1 for the console */
+static inline int spawn_fds(const char *path, const char *const *argv, const int *fds) { return (int)SC3(SYS_spawn, path, argv, fds); }
 static inline int wait(int pid, int *status)              { return (int)SC2(SYS_wait, pid, status); }
 static inline int getppid(void)                           { return (int)SC0(SYS_getppid); }
 static inline int chdir(const char *p)                    { return (int)SC1(SYS_chdir, p); }
 static inline long getcwd(char *buf, size_t n)            { return SC2(SYS_getcwd, buf, n); }
+static inline int kill(int pid)                           { return (int)SC1(SYS_kill, pid); }
+static inline int setfg(int pid)                          { return (int)SC1(SYS_setfg, pid); }
+static inline int sysinfo(struct tern_sysinfo *si)        { return (int)SC1(SYS_sysinfo, si); }
+static inline int proclist(struct tern_procinfo *b, unsigned max) { return (int)SC2(SYS_proclist, b, max); }
 
 void *malloc(size_t n);
 void free(void *p);

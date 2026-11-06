@@ -42,6 +42,36 @@ void test_wait(void) {
             proc_live_count());
 }
 
+/* Day 9 session: kill / interrupted waits / spawn fds / proclist (user/bin/killtest.c). */
+void test_kill(void) {
+    unsigned live0 = proc_live_count();
+    wait_live(live0);
+    int code = run_prog("/bin/killtest");
+    if (code) panic("killtest failed check %d", code);
+    wait_live(live0);                        /* the orphaned "child sleep 300" too */
+}
+
+/* Two user processes keep different values in xmm0-15 / x87 across context switches. */
+void test_fpu(void) {
+    struct sched_stats s0, s1;
+    sched_get_stats(&s0);
+    struct process *p[2];
+    for (int i = 0; i < 2; i++) {
+        int err = 0;
+        const char *argv[] = { "fputest", i ? "2" : "1", NULL };
+        p[i] = proc_spawn_elf("/bin/fputest", argv, &err);
+        if (!p[i]) panic("spawning fputest failed (%d)", err);
+    }
+    struct process info[2];
+    for (int i = 0; i < 2; i++) {
+        int code = proc_wait(p[i], &info[i]);
+        if (code) panic("fputest %d failed: exit %d", i + 1, code);
+    }
+    sched_get_stats(&s1);
+    kprintf("[TEST] fpu ok: 2 processes kept xmm0-15/x87/double state over %lu+%lu switches, "
+            "%lu fxsaves\n", info[0].switches, info[1].switches, s1.fpu_saves - s0.fpu_saves);
+}
+
 void test_tty(void) {
     struct tty_stats s0, s1;
     tty_get_stats(&s0);

@@ -23,18 +23,34 @@
 #define SYS_brk       15    /* brk(addr) -> new break; brk(0) queries. Heap grows up from
                                the end of the program image, max USER_HEAP_MAX bytes */
 /* Day 21: processes */
-#define SYS_spawn     16    /* spawn(path, argv) -> child pid. argv: NULL-terminated array
-                               (max 32 entries, 2 KiB of strings); NULL = no arguments.
-                               The child gets fresh console fds and the caller's cwd */
+#define SYS_spawn     16    /* spawn(path, argv, fds) -> child pid. argv: NULL-terminated
+                               array (max 32 entries, 2 KiB of strings); NULL = no
+                               arguments. fds: NULL, or int[3] giving the child's fds 0-2:
+                               a caller fd to share, or -1 = fresh /dev/console. NULL =
+                               all three on the console. The child gets the caller's cwd */
 #define SYS_wait      17    /* wait(pid or -1, int *status) -> pid of the reaped child;
                                -ECHILD if there is no such child. status may be NULL */
 #define SYS_getppid   18    /* getppid() -> parent pid, 0 if none (orphan / kernel) */
 #define SYS_chdir     19    /* chdir(path) -> 0 */
 #define SYS_getcwd    20    /* getcwd(buf, size) -> length (without NUL) */
-#define SYS_COUNT     21
+/* Day 9 session (plan Days 24-26): signals-lite, system information */
+#define SYS_kill      21    /* kill(pid) -> 0; the process exits with TERN_EXIT_KILLED the
+                               next time it would return to ring 3 (blocking tty reads,
+                               wait and sleep are interrupted). -ESRCH if no such process */
+#define SYS_setfg     22    /* setfg(pid) -> previous foreground pid. Ctrl-C on the console
+                               kills the foreground process (TERN_EXIT_INTR); 0 = none, then
+                               Ctrl-C just discards the line being edited */
+#define SYS_sysinfo   23    /* sysinfo(struct tern_sysinfo *) -> 0 */
+#define SYS_proclist  24    /* proclist(struct tern_procinfo *buf, max) -> number of
+                               processes (fills at most max entries) */
+#define SYS_COUNT     25
+#define TERN_EXIT_INTR   130   /* killed by Ctrl-C */
+#define TERN_EXIT_KILLED 137   /* killed by kill() */
 #define USER_HEAP_MAX (64ull << 20)
 
 #define ENOENT  2
+#define ESRCH   3
+#define EINTR   4
 #define EIO     5
 #define EBADF   9
 #define ECHILD  10
@@ -84,6 +100,27 @@ struct tern_dirent {
     uint32_t reserved;
     uint64_t size;
     char name[56];           /* NUL-terminated */
+};
+struct tern_sysinfo {
+    uint64_t uptime_ms;
+    uint64_t frames_total, frames_free;      /* 4 KiB physical frames */
+    uint64_t heap_mapped, heap_used, heap_free;  /* kernel heap, bytes */
+    uint64_t procs, threads;                 /* live processes / kernel threads */
+    uint64_t switches, preemptions;          /* scheduler counters since boot */
+    uint64_t vfs_nodes, vfs_bytes;           /* RAM FS nodes and file data bytes */
+};
+#define TERN_PS_RUNNING  0
+#define TERN_PS_READY    1
+#define TERN_PS_SLEEPING 2
+#define TERN_PS_BLOCKED  3
+#define TERN_PS_EXITED   4
+struct tern_procinfo {
+    int32_t pid, ppid;
+    uint32_t state;          /* TERN_PS_* */
+    uint32_t reserved;
+    uint64_t ticks;          /* timer ticks spent running */
+    uint64_t mem_pages;      /* user heap pages (brk) */
+    char name[24];
 };
 #endif
 #endif

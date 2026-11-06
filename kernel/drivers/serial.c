@@ -53,6 +53,7 @@ static void serial_irq(struct regs *r) {
     (void)r;
     while (inb(COM1 + 5) & 1) {
         char c = (char)inb(COM1);
+        if (c == 0x03 && tty_intr()) continue;  /* Ctrl-C killed the foreground process */
         unsigned next = (rx_head + 1) % RX_RING;
         if (next != rx_tail) { rx[rx_head] = c; rx_head = next; }
     }

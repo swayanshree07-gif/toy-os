@@ -43,6 +43,11 @@ TernOS [0-9.]+ booting
 \[TEST\] ulibc ok: printf formats, brk, 3000 malloc/realloc/free ops, heap [0-9]+ KiB in 1 free block\(s\)
 \[TEST\] wait ok: spawn/wait exit codes, wait\(-1\) x4, ECHILD, getppid, fault status 142, chdir/getcwd
 \[TEST\] process tree ok: orphans reaped, [0-9]+ processes live, no frames leaked
+# Day 9 session: kill, interrupted waits, spawn fds, proclist/sysinfo, FPU state
+\[TEST\] kill ok: spinner, sleeper \([0-9]+ ms\), waiter, self killed with 137; spawn fds redirect; proclist [0-9]+ procs; sysinfo
+^fputest 1: ok, sum 1644[0-9]+/1e9
+^fputest 2: ok, sum 1644[0-9]+/1e9
+\[TEST\] fpu ok: 2 processes kept xmm0-15/x87/double state over [0-9]+\+[0-9]+ switches, [0-9]+ fxsaves
 \[TEST\] tty read ok: 'abc', 'ok go' in 2 reads, backspace, \^U, \^D eof
 \[TEST\] tty ok: 2 lines, 3 chars erased, 1 eof
 # Day 23/24: shell script /etc/shtest.sh (output lines start at column 0)
@@ -60,10 +65,36 @@ TernOS [0-9.]+ booting
 ^tsh: nosuchprog: not found
 ^up [0-9]+\.[0-9]{3} s
 ^no newline, \+ echo done
+^\+ cat /work/f.txt
+^first line
+^second
+^2 3 18
+^2 3 18 /work/f.txt
+^  count +19
+^  err +0
+^  f.txt +18
+^rm: /work: directory not empty
+^ls: /work: not found
+^tsh: /nowhere: not found
+^tsh: missing file name after redirection
+^mkdir: /etc: already exists
+^  PID  PPID STATE    TIME HEAP NAME
+^ +[0-9]+ +0 block +[0-9]+\.[0-9]{2} +[0-9]+ tsh
+^ +[0-9]+ +[0-9]+ run +[0-9]+\.[0-9]{2} +[0-9]+ ps
+^phys: [0-9]+ KiB total, [0-9]+ KiB used, [0-9]+ KiB free
+^heap: [0-9]+ KiB mapped
+^ramfs: [0-9]+ nodes
+^sched: [0-9]+ processes, [0-9]+ threads
+^kill: 99999: no such process
 \[TEST\] shell script ok: exit 5
 # Day 23: interactive shell typed by the harness
 tern:/\$ echo hi from tsh
 ^hi from tsh
 tern:/etc\$ pwd
+tern:/etc\$ spin 20000
+^spin: started \(pid [0-9]+, 20000 ms\)
+^\^C
+^tsh: spin: interrupted
+^130
 tern:/etc\$ exit 3
 \[TEST\] shell ok: interactive session, exit 3

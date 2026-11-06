@@ -41,6 +41,8 @@ struct process {
     struct process *children, *sibling;
     struct waitq child_wq;            /* parent sleeps here in wait() */
     bool exited;                      /* proc_exit ran; the thread is about to die */
+    int kill_code;                    /* != 0: kill pending, exit with this code */
+    struct process *all_next;         /* list of all live processes (pid lookup) */
     bool orphan;
     int exit_code;
     /* filled in when the thread dies */
@@ -57,6 +59,10 @@ struct process *proc_spawn_blob(const char *name, const void *code, size_t len);
 /* Load an ELF64 executable from the VFS and start it with argv (NULL-terminated, may be
  * NULL). Returns NULL with *err set (negative errno) on failure. */
 struct process *proc_spawn_elf(const char *path, const char *const *argv, int *err);
+/* Same, with the child's fds 0-2 given: files[i] is shared (a reference is taken), or
+ * NULL = a fresh /dev/console file. files itself may be NULL. */
+struct process *proc_spawn_elf_fds(const char *path, const char *const *argv,
+                                   struct file *const *files, int *err);
 /* Validate and load an ELF64 image into the address space pml4; sets *entry and *brk
  * (first page after the highest segment). 0 or negative errno. */
 int elf_load(uint64_t pml4, const void *image, size_t len, uint64_t *entry, uint64_t *brk);
@@ -70,7 +76,17 @@ int proc_wait(struct process *p, struct process *info);
 struct process *proc_current(void);
 void proc_init(void);              /* starts the orphan reaper thread */
 /* Spawn an ELF program as a child of the calling process (SYS_spawn): pid or -errno. */
-int proc_spawn_child(const char *path, const char *const *argv);
+int proc_spawn_child(const char *path, const char *const *argv, struct file *const *files);
+/* Ask process pid to exit with code (kill / Ctrl-C). Safe in IRQ context. Blocking
+ * waits of the target that check proc_kill_pending return early. 0 or -ESRCH. */
+int proc_kill(int pid, int code);
+/* True if the current thread belongs to a process with a kill pending. */
+bool proc_kill_pending(void);
+/* Before returning to ring 3: exits the current process if a kill is pending. */
+void proc_check_kill(void);
+/* Snapshot of all live processes (SYS_proclist); returns the total count. */
+struct tern_procinfo;
+unsigned proc_list(struct tern_procinfo *out, unsigned max);
 /* Wait for a child (pid, or -1 = any) of the calling process to exit, free it and
  * store its exit code. Returns the child's pid, or -ECHILD. */
 int proc_wait_child(int pid, int *code);
@@ -87,6 +103,8 @@ void syscall_init(void);           /* EFER.SCE, STAR, LSTAR, SFMASK */
 void test_user(void);
 void test_elf(void);
 void test_wait(void);
+void test_kill(void);
+void test_fpu(void);
 void test_tty(void);
 void test_shell(bool interactive);
 

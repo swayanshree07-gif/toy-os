@@ -32,11 +32,16 @@ struct thread {
     bool boot_stack;               /* main thread: stack not ours to free */
     uint64_t cr3;                  /* address space (kernel PML4 for kernel threads) */
     struct process *proc;          /* owning user process, NULL for kernel threads */
+    uint8_t *fpu;                  /* 512-byte fxsave area (16-aligned), user threads */
 };
 
 struct process;
 typedef void (*thread_fn)(void *arg);
 
+/* FPU/SSE: enabled at sched_init (CR0.MP, CR4.OSFXSR/OSXMMEXCPT). The kernel itself
+ * is built without x87/SSE, so only user threads have FPU state: it is saved with
+ * fxsave when one is switched out and restored when one is switched in. New user
+ * threads start from the clean state captured after fninit (MXCSR 0x1f80). */
 void sched_init(void);             /* adopt the running boot context as thread "main" */
 bool sched_active(void);
 struct thread *thread_create(const char *name, thread_fn fn, void *arg);
@@ -45,6 +50,8 @@ void thread_yield(void);
 __attribute__((noreturn)) void thread_exit(int code);
 int thread_join(struct thread *t);  /* waits for exit, frees the thread, returns its code */
 void thread_sleep_ms(uint64_t ms);
+/* Wake t early if it is in thread_sleep_ms (true if it was). */
+bool sched_wake_sleeper(struct thread *t);
 void sched_set_preempt(bool on);
 
 /* Called from the timer IRQ with the new tick count, and at the end of every IRQ. */
@@ -58,7 +65,7 @@ void waitq_sleep(struct waitq *q);
 bool waitq_wake_one(struct waitq *q);
 unsigned waitq_wake_all(struct waitq *q);
 
-struct sched_stats { uint64_t switches, preemptions, threads_created, stacks_live; };
+struct sched_stats { uint64_t switches, preemptions, threads_created, stacks_live, fpu_saves; };
 void sched_get_stats(struct sched_stats *s);
 /* For the #DF handler: prints a diagnosis if cr2 is in the current thread's guard page. */
 bool sched_check_stack_overflow(uint64_t cr2);

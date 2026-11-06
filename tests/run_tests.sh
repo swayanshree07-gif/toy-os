@@ -14,11 +14,13 @@ overall=0
 # prompt in the serial log, then types its keys.
 #  1. kernel keyboard test: expects "hi T!"
 #  2. /bin/ttytest: "abx<BS>c", "zz<^U>ok go", then ^D (see user/bin/ttytest.c)
-#  3. interactive /bin/tsh: "echo hi from tsh", "cd /etc", "pwd", "exit 3"
+#  3. interactive /bin/tsh: "echo hi from tsh", "cd /etc", "pwd", "spin 20000"
+#  4. once spin runs: Ctrl-C (kills it, status 130), "status", "exit 3"
 KEY_STAGES=(
     "kbd: waiting|h i spc shift-t shift-1 ret"
     "tty: waiting|a b x backspace c ret z z ctrl-u o k spc g o ret ctrl-d"
-    "tsh: TernOS shell|e c h o spc h i spc f r o m spc t s h ret c d spc slash e t c ret p w d ret e x i t spc 3 ret"
+    "tsh: TernOS shell|e c h o spc h i spc f r o m spc t s h ret c d spc slash e t c ret p w d ret s p i n spc 2 0 0 0 0 ret"
+    "20000 ms)|ctrl-c s t a t u s ret e x i t spc 3 ret"
 )
 
 # Feed QEMU monitor commands on stdout.

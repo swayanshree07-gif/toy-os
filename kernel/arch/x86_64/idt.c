@@ -93,6 +93,7 @@ void isr_dispatch(struct regs *r) {
         if (!irq_ack(v)) return;   /* EOI first: a handler may switch tasks and not return soon */
         if (handlers[v]) handlers[v](r);
         sched_irq_exit();  /* may switch threads; we come back here when rescheduled */
+        if ((r->cs & 3) == 3) proc_check_kill();   /* pending kill of a ring-3 spinner */
         return;
     }
     if (handlers[v]) { handlers[v](r); return; }

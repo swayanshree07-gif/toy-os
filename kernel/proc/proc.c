@@ -10,6 +10,7 @@
 #include "string.h"
 #include "vfs.h"
 #include "syscall_nr.h"
+#include "tty.h"
 
 extern __attribute__((noreturn)) void enter_user(uint64_t rip, uint64_t rsp);
 
@@ -19,6 +20,21 @@ static unsigned live_procs;
 /* Orphans that have exited, waiting for the reaper (linked through ->sibling). */
 static struct process *orphans;
 static struct waitq reaper_wq;
+static struct process *all_procs;       /* interrupts off while walking or changing */
+
+static void list_add(struct process *p) {
+    uint64_t f = irq_save();
+    p->all_next = all_procs;
+    all_procs = p;
+    irq_restore(f);
+}
+
+static void list_remove(struct process *p) {
+    uint64_t f = irq_save();
+    for (struct process **pp = &all_procs; *pp; pp = &(*pp)->all_next)
+        if (*pp == p) { *pp = p->all_next; break; }
+    irq_restore(f);
+}
 
 unsigned proc_live_count(void) { return live_procs; }
 
@@ -46,16 +62,28 @@ void proc_copy_to_space(uint64_t pml4, uint64_t va, const void *src, size_t len)
     }
 }
 
-/* Standard files and cwd for a new process (called before its thread exists). */
-static int proc_setup_files(struct process *p) {
+/* Standard files and cwd for a new process (called before its thread exists).
+ * files[i] (if given and not NULL) becomes fd i, otherwise fd i is the console. */
+static int proc_setup_files(struct process *p, struct file *const *files) {
     struct process *parent = proc_current();
     p->cwd = parent && parent->cwd ? parent->cwd : vfs_root();
     vfs_hold(p->cwd);
-    struct file *con;
-    int rc = vfs_open(NULL, "/dev/console", O_RDWR, &con);
-    if (rc) return rc;
-    p->fds[0] = con;
-    for (int i = 1; i < 3; i++) { file_hold(con); p->fds[i] = con; }
+    struct file *con = NULL;
+    for (int i = 0; i < 3; i++) {
+        struct file *f = files ? files[i] : NULL;
+        if (!f) {
+            if (!con) {
+                int rc = vfs_open(NULL, "/dev/console", O_RDWR, &con);
+                if (rc) return rc;
+            } else {
+                file_hold(con);
+            }
+            f = con;
+        } else {
+            file_hold(f);
+        }
+        p->fds[i] = f;
+    }
     return 0;
 }
 
@@ -65,25 +93,27 @@ static void proc_release_files(struct process *p) {
     if (p->cwd) { vfs_put(p->cwd); p->cwd = NULL; }
 }
 
-static struct process *proc_alloc(const char *name) {
+static struct process *proc_alloc(const char *name, struct file *const *files) {
     struct process *p = kzalloc(sizeof *p);
     if (!p) return NULL;
     waitq_init(&p->child_wq);
     for (unsigned i = 0; i < sizeof p->name - 1 && name[i]; i++) p->name[i] = name[i];
     p->pml4 = vmm_new_space();
-    if (!p->pml4 || proc_setup_files(p)) {
+    if (!p->pml4 || proc_setup_files(p, files)) {
         proc_release_files(p);
         if (p->pml4) vmm_destroy_space(p->pml4);
         kfree(p);
         return NULL;
     }
     live_procs++;
+    list_add(p);
     return p;
 }
 
 static void proc_free_failed(struct process *p) {
     proc_release_files(p);
     if (p->pml4) vmm_destroy_space(p->pml4);
+    list_remove(p);
     kfree(p);
     live_procs--;
 }
@@ -114,7 +144,7 @@ static int proc_start(struct process *p) {
 }
 
 struct process *proc_spawn_blob(const char *name, const void *code, size_t len) {
-    struct process *p = proc_alloc(name);
+    struct process *p = proc_alloc(name, NULL);
     if (!p) return NULL;
     uint64_t code_pages = ALIGN_UP(len, PAGE_SIZE) / PAGE_SIZE;
     /* code: user, read + execute (no PTE_W, no NX) */
@@ -167,6 +197,11 @@ static int push_argv(struct process *p, const char *const *argv) {
 }
 
 struct process *proc_spawn_elf(const char *path, const char *const *argv, int *err) {
+    return proc_spawn_elf_fds(path, argv, NULL, err);
+}
+
+struct process *proc_spawn_elf_fds(const char *path, const char *const *argv,
+                                   struct file *const *files, int *err) {
     struct process *cur = proc_current();
     struct file *f;
     int rc = vfs_open(cur ? cur->cwd : NULL, path, O_RDONLY, &f);
@@ -182,7 +217,7 @@ struct process *proc_spawn_elf(const char *path, const char *const *argv, int *e
 
     const char *name = path;
     for (const char *q = path; *q; q++) if (*q == '/' && q[1]) name = q + 1;
-    struct process *p = proc_alloc(name);
+    struct process *p = proc_alloc(name, files);
     if (!p) { kfree(img); *err = -ENOMEM; return NULL; }
     uint64_t brk;
     rc = elf_load(p->pml4, img, st.size, &p->entry, &brk);
@@ -238,6 +273,7 @@ int proc_wait(struct process *p, struct process *info) {
     kassert(p->pml4 == 0);
     p->thread = NULL;
     if (info) *info = *p;
+    list_remove(p);
     kfree(p);
     live_procs--;
     return code;
@@ -262,9 +298,9 @@ void proc_init(void) {
     kassert(t);
 }
 
-int proc_spawn_child(const char *path, const char *const *argv) {
+int proc_spawn_child(const char *path, const char *const *argv, struct file *const *files) {
     int err = 0;
-    struct process *c = proc_spawn_elf(path, argv, &err);
+    struct process *c = proc_spawn_elf_fds(path, argv, files, &err);
     return c ? c->pid : err;
 }
 
@@ -282,6 +318,7 @@ int proc_wait_child(int pid, int *code) {
             if (c->exited) { found = c; break; }
         }
         if (found || !any) break;
+        if (p->kill_code) { irq_restore(f); return -EINTR; }
         waitq_sleep(&p->child_wq);
     }
     if (!found) { irq_restore(f); return -ECHILD; }
@@ -306,4 +343,51 @@ __attribute__((noreturn)) void proc_user_fault(struct regs *r) {
     if (r->vector == 14) kprintf(" cr2 %lx", cr2);
     kprintf(" -> killed\n");
     proc_exit(PROC_FAULT_EXIT_BASE + (int)r->vector);
+}
+
+/* ---- kill (Day 9 session) ---- */
+int proc_kill(int pid, int code) {
+    uint64_t f = irq_save();
+    struct process *p = all_procs;
+    while (p && (p->pid != pid || !p->thread)) p = p->all_next;
+    if (!p || p->exited) { irq_restore(f); return -ESRCH; }
+    if (!p->kill_code) p->kill_code = code;
+    /* Interrupt what it may be blocked in: a sleep, wait() for a child, a tty read.
+     * Those loops re-check their condition, so the extra wakeups are harmless. */
+    sched_wake_sleeper(p->thread);
+    waitq_wake_all(&p->child_wq);
+    tty_input_ready();
+    irq_restore(f);
+    return 0;
+}
+
+bool proc_kill_pending(void) {
+    struct process *p = proc_current();
+    return p && p->kill_code;
+}
+
+void proc_check_kill(void) {
+    struct process *p = proc_current();
+    if (p && p->kill_code && !p->exited) proc_exit(p->kill_code);
+}
+
+unsigned proc_list(struct tern_procinfo *out, unsigned max) {
+    static const uint32_t st[] = { TERN_PS_READY, TERN_PS_RUNNING, TERN_PS_SLEEPING,
+                                   TERN_PS_BLOCKED, TERN_PS_EXITED };
+    unsigned n = 0;
+    uint64_t f = irq_save();
+    for (struct process *p = all_procs; p; p = p->all_next, n++) {
+        if (n >= max) continue;
+        struct tern_procinfo *o = &out[n];
+        memset(o, 0, sizeof *o);
+        o->pid = p->pid;
+        o->ppid = p->parent ? p->parent->pid : 0;
+        struct thread *t = p->thread;
+        o->state = p->exited || !t ? TERN_PS_EXITED : st[t->state];
+        o->ticks = t ? t->ticks_run : p->ticks_run;
+        o->mem_pages = p->brk_base ? (ALIGN_UP(p->brk, PAGE_SIZE) - p->brk_base) / PAGE_SIZE : 0;
+        memcpy(o->name, p->name, sizeof o->name);
+    }
+    irq_restore(f);
+    return n;
 }

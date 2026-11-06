@@ -62,6 +62,7 @@ static void handle_scancode(uint8_t sc) {
     if (!c) return;
     if (caps && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) c ^= 0x20;
     if (ctrl && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) c &= 0x1F;
+    if (c == 0x03 && tty_intr()) return;    /* Ctrl-C killed the foreground process */
     push(c);
 }
 

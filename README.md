@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 8 session; plan Days 1–23 done, Day 24 partly)
+## Status (Day 9 session; plan Days 1–24 done, most of 25–26)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -67,31 +67,45 @@ Working:
   segment) before anything is mapped; System V initial stack with `argc`/`argv`
 - **User programs in C** (`user/`): `crt0`, system-call wrappers, string functions,
   `printf`/`snprintf`, `malloc`/`free`/`calloc`/`realloc` on top of a `brk` system call.
-  Test programs: `hello`, `fstest`, `ulibtest`, `segv`, `spawntest`, `child`, `ttytest`
-- **Processes**: `spawn(path, argv)` / `wait(pid or -1, &status)` / `getppid`, a process
+  Test programs: `hello`, `fstest`, `ulibtest`, `segv`, `spawntest`, `child`, `ttytest`,
+  `killtest`, `fputest`
+- **Processes**: `spawn(path, argv, fds)` / `wait(pid or -1, &status)` / `getppid`, a process
   tree (parent → children), exit status 128 + vector for faulted processes, `-ECHILD`;
   children whose parent exits first become orphans and are freed by a kernel reaper thread.
   Per-process cwd with `chdir` / `getcwd`
 - **Console TTY**: `read` from `/dev/console` blocks until a line is typed on the PS/2
   keyboard *or* the serial port (COM1 receive interrupt). Canonical line discipline with
-  echo, Backspace, Ctrl-U (erase line), Ctrl-C (discard line), Ctrl-D (end of file)
+  echo, Backspace, Ctrl-U (erase line), Ctrl-C, Ctrl-D (end of file). Ctrl-C kills the
+  foreground process (set by the shell with `setfg`, exit status 130), or discards the
+  line being edited when there is none
+- **kill**: `kill(pid)` makes a process exit with status 137 the next time it would return
+  to ring 3 (checked after every system call and every interrupt from ring 3); blocking
+  `sleep_ms`, `wait` and console reads are interrupted (`-EINTR` internally)
+- **FPU/SSE**: x87/SSE enabled (CR0/CR4); every user thread has its own `fxsave` area,
+  saved when it is switched out and restored when it is switched in (the kernel itself
+  is built without FPU/SSE code), so user programs may use floating point and SSE
+- **System information**: `sysinfo` (memory, heap, scheduler, RAM FS counters) and
+  `proclist` (pid, parent, state, CPU time, heap pages, name) system calls
 - **Shell `tsh`** (`user/bin/tsh.c`): prompt with the cwd, words and `"quoted words"`,
   `#` comments, builtins `cd`, `pwd`, `exit [code]`, `status`, `help`; other words run
-  `/bin/<name>` (or a path) and wait for it. `tsh FILE` runs a script. A normal boot starts
-  the shell on the console and restarts it when it exits
-- **Programs**: `echo [-n]`, `cat`, `ls`, `uptime`
+  `/bin/<name>` (or a path) and wait for it, in the foreground (Ctrl-C stops it).
+  Redirections `< in`, `> out`, `>> out` (append), `2> err` (passed to the child through
+  `spawn`'s fd argument). `tsh FILE` runs a script. A normal boot starts the shell on the
+  console and restarts it when it exits
+- **Programs**: `echo [-n]`, `cat`, `ls`, `uptime`, `ps`, `mem`, `kill`, `rm`, `mkdir`,
+  `wc`, `spin` (busy loop, for trying Ctrl-C)
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: `ps` / `mem` (need a process/memory info system call), `exec`, `kill` / Ctrl-C
-for a running program, writing files from the shell, saving FPU/SSE state, ISO image.
+Not yet: `exec`, pipes, background jobs, redirection for shell builtins, an ISO image,
+SMP.
 
 ### Adding a user program
 
 Drop `user/bin/<name>.c` (with `#include "tern.h"` and a `main(int argc, char **argv)`) into
 the tree; `make` compiles it, links it with `user/lib` at 0x400000 and packs it into the
-initrd as `/bin/<name>`. User code is built with `-mgeneral-regs-only`: the kernel does not
-save SSE/FPU state yet.
+initrd as `/bin/<name>`. Floating point / SSE may be used (state is saved per thread);
+there is no `printf("%f")` yet.
 
 ## Requirements
 
@@ -145,8 +159,13 @@ Both run the in-kernel unit tests (`[TEST] selftest N/N passed`).
 During each positive test boot the QEMU monitor is on stdin and the script types keys
 with `sendkey` in stages, each started by a prompt in the serial log (`KEY_STAGES` in
 `tests/run_tests.sh`): `hi T!` for the kernel keyboard test, edited lines and Ctrl-D for
-`/bin/ttytest`, and an interactive `tsh` session (`echo`, `cd`, `pwd`, `exit 3`). Before
-that, `tsh /etc/shtest.sh` runs a script whose output lines are checked by markers.
+`/bin/ttytest`, and an interactive `tsh` session (`echo`, `cd`, `pwd`, `spin 20000`, then
+Ctrl-C once spin has started, `status` → 130, `exit 3`). Before that, `tsh /etc/shtest.sh`
+runs a script whose output lines are checked by markers (including redirection, `wc`,
+`rm`, `mkdir`, `ps`, `mem`, `kill`). `/bin/killtest` checks kill and spawn redirection
+from ring 3, and two concurrent `/bin/fputest` processes check that xmm0–15, x87 and
+double-precision results survive context switches (the test fails if the fxrstor is
+removed).
 
 Negative tests: for every `tests/crash-<name>.txt` the script also boots the image
 `build/esp-crash-<name>` (kernel cmdline `test crash=<name>`), which must panic (exit 35)

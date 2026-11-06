@@ -82,10 +82,10 @@ $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 	sed 's/@CMDLINE@/$(CMDLINE_$*)/' $< > $@
 
 # User programs (Day 19): static ELF64 executables, one per user/bin/*.c, linked with
-# crt0 + the user library at 4 MiB (user/linker.ld). No SSE: the kernel does not save
-# FPU/SSE state on context switches (yet), so user code is general-registers only.
+# crt0 + the user library at 4 MiB (user/linker.ld). User code may use x87/SSE: the
+# scheduler saves and restores FPU state per user thread (fxsave/fxrstor).
 UCFLAGS := --target=x86_64-elf -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
-           -fno-pie -fno-builtin -mgeneral-regs-only -fno-omit-frame-pointer \
+           -fno-pie -fno-builtin -fno-omit-frame-pointer \
            -O2 -g -Wall -Wextra -Werror -Iuser/lib -Ikernel/include
 ULIB_OBJS := $(BUILD)/user/lib/crt0.S.o $(BUILD)/user/lib/ulib.c.o $(BUILD)/user/lib/malloc.c.o
 USER_PROGS := $(patsubst user/bin/%.c,%,$(wildcard user/bin/*.c))
