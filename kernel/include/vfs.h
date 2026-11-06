@@ -57,6 +57,8 @@ struct vnode *vfs_root(void);
  * a held vnode (release with vfs_put) or NULL with *err set (negative errno). */
 struct vnode *vfs_lookup(struct vnode *cwd, const char *path, int *err);
 void vfs_hold(struct vnode *v);
+/* Absolute path of a directory into buf; length or -ERANGE / -ENOENT (unlinked). */
+int vfs_getpath(struct vnode *v, char *buf, size_t size);
 void vfs_put(struct vnode *v);
 
 /* Create a file/dir/device; returns the new held vnode or NULL with *err.

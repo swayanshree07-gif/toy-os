@@ -22,12 +22,23 @@
 #define SYS_fstat     14    /* fstat(fd, struct tern_stat *) -> 0 */
 #define SYS_brk       15    /* brk(addr) -> new break; brk(0) queries. Heap grows up from
                                the end of the program image, max USER_HEAP_MAX bytes */
-#define SYS_COUNT     16
+/* Day 21: processes */
+#define SYS_spawn     16    /* spawn(path, argv) -> child pid. argv: NULL-terminated array
+                               (max 32 entries, 2 KiB of strings); NULL = no arguments.
+                               The child gets fresh console fds and the caller's cwd */
+#define SYS_wait      17    /* wait(pid or -1, int *status) -> pid of the reaped child;
+                               -ECHILD if there is no such child. status may be NULL */
+#define SYS_getppid   18    /* getppid() -> parent pid, 0 if none (orphan / kernel) */
+#define SYS_chdir     19    /* chdir(path) -> 0 */
+#define SYS_getcwd    20    /* getcwd(buf, size) -> length (without NUL) */
+#define SYS_COUNT     21
 #define USER_HEAP_MAX (64ull << 20)
 
 #define ENOENT  2
 #define EIO     5
 #define EBADF   9
+#define ECHILD  10
+#define ERANGE  34
 #define ENOMEM  12
 #define EACCES  13
 #define EFAULT  14

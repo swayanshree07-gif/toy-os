@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 7 session; plan Days 1–20 done)
+## Status (Day 8 session; plan Days 1–23 done, Day 24 partly)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -67,12 +67,24 @@ Working:
   segment) before anything is mapped; System V initial stack with `argc`/`argv`
 - **User programs in C** (`user/`): `crt0`, system-call wrappers, string functions,
   `printf`/`snprintf`, `malloc`/`free`/`calloc`/`realloc` on top of a `brk` system call.
-  Programs: `hello`, `fstest`, `ulibtest`, `segv` (all used by the tests)
+  Test programs: `hello`, `fstest`, `ulibtest`, `segv`, `spawntest`, `child`, `ttytest`
+- **Processes**: `spawn(path, argv)` / `wait(pid or -1, &status)` / `getppid`, a process
+  tree (parent → children), exit status 128 + vector for faulted processes, `-ECHILD`;
+  children whose parent exits first become orphans and are freed by a kernel reaper thread.
+  Per-process cwd with `chdir` / `getcwd`
+- **Console TTY**: `read` from `/dev/console` blocks until a line is typed on the PS/2
+  keyboard *or* the serial port (COM1 receive interrupt). Canonical line discipline with
+  echo, Backspace, Ctrl-U (erase line), Ctrl-C (discard line), Ctrl-D (end of file)
+- **Shell `tsh`** (`user/bin/tsh.c`): prompt with the cwd, words and `"quoted words"`,
+  `#` comments, builtins `cd`, `pwd`, `exit [code]`, `status`, `help`; other words run
+  `/bin/<name>` (or a path) and wait for it. `tsh FILE` runs a script. A normal boot starts
+  the shell on the console and restarts it when it exits
+- **Programs**: `echo [-n]`, `cat`, `ls`, `uptime`
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: `spawn`/`exec`/`wait` from user space, keyboard input for user programs (TTY),
-the shell and its programs.
+Not yet: `ps` / `mem` (need a process/memory info system call), `exec`, `kill` / Ctrl-C
+for a running program, writing files from the shell, saving FPU/SSE state, ISO image.
 
 ### Adding a user program
 
@@ -91,8 +103,8 @@ save SSE/FPU state yet.
 
 ```sh
 make          # builds build/ternos.elf and build/esp/EFI/BOOT/BOOTX64.EFI
-make run      # boots in a QEMU window, serial on the terminal
-make run-headless   # no window, serial on stdout, killed after 60 s
+make run      # boots in a QEMU window, serial on the terminal; the shell starts
+make run-headless   # no window, serial on stdout (type shell commands there), killed after 60 s
 make test     # headless boot with the "test" cmdline, checks serial markers
 tools/screenshot.sh [out.png]   # boots headless and saves a PNG of the screen
 ```
@@ -130,8 +142,11 @@ There are two positive test images: `test` (APIC mode) and `test-pic` (cmdline
 `test kbd noapic`, legacy 8259 + PIT); each must also match `tests/pass-<image>.txt`.
 Both run the in-kernel unit tests (`[TEST] selftest N/N passed`).
 
-During each positive test boot the QEMU monitor is on stdin: once the kernel prints
-`[TEST] kbd: waiting`, the script types `hi T!<enter>` with `sendkey`.
+During each positive test boot the QEMU monitor is on stdin and the script types keys
+with `sendkey` in stages, each started by a prompt in the serial log (`KEY_STAGES` in
+`tests/run_tests.sh`): `hi T!` for the kernel keyboard test, edited lines and Ctrl-D for
+`/bin/ttytest`, and an interactive `tsh` session (`echo`, `cd`, `pwd`, `exit 3`). Before
+that, `tsh /etc/shtest.sh` runs a script whose output lines are checked by markers.
 
 Negative tests: for every `tests/crash-<name>.txt` the script also boots the image
 `build/esp-crash-<name>` (kernel cmdline `test crash=<name>`), which must panic (exit 35)
@@ -146,13 +161,14 @@ panic two calls deep must print a backtrace naming every caller.
 ```
 kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs,
                       switch.S (context switch), usermode.S (iretq to ring 3, syscall entry), acpi.c (RSDP/XSDT/MADT), apic.c (LAPIC, I/O APIC)
-kernel/drivers/       serial, framebuffer, text console, irq.c (PIC/APIC selection), PIC,
-                      PIT + system tick, PS/2 keyboard
+kernel/drivers/       serial (polled output, IRQ input), framebuffer, text console, irq.c
+                      (PIC/APIC selection), PIC, PIT + system tick, PS/2 keyboard
+kernel/tty/           tty.c: console input line discipline
 kernel/lib/           string functions, kprintf, ksyms.c (symbols, backtraces), ktest.c
 kernel/selftest/      KTEST unit tests
 kernel/sched/         sched.c (threads, scheduler, wait queues), sync.c (locks), self-tests
-kernel/proc/          proc.c (processes, fds, argv, ring-3 entry, user faults), elf.c (ELF64
-                      loader), syscall.c, self-tests
+kernel/proc/          proc.c (processes, process tree, reaper, fds, argv, ring-3 entry, user
+                      faults), elf.c (ELF64 loader), syscall.c, self-tests
 kernel/user/          blobs.S: flat ring-3 test programs for the low-level ring-3 tests
 kernel/fs/            initrd.c (TRD archive parser, CRC-32), vfs.c (VFS tree + RAM FS,
                       open files), devfs.c (/dev nodes), self-tests
@@ -160,7 +176,7 @@ kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
-initrd/               files packed into the initrd image
+initrd/               files packed into the initrd image (etc/motd, etc/shtest.sh)
 user/                 user space: linker.ld, lib/ (crt0, tern.h, ulib.c, malloc.c), bin/ (programs)
 tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot script
 tests/                headless test runner and expected markers

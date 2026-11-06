@@ -10,18 +10,30 @@ BUILD=${1:-build}
 here=$(cd "$(dirname "$0")" && pwd)
 overall=0
 
-# Keys typed into the guest (QEMU "sendkey" names) once the kernel prints
-# "[TEST] kbd: waiting": expected to arrive as "hi T!".
-KEYS="h i spc shift-t shift-1 ret"
+# Keys typed into the guest (QEMU "sendkey" names), in stages: each stage waits for its
+# prompt in the serial log, then types its keys.
+#  1. kernel keyboard test: expects "hi T!"
+#  2. /bin/ttytest: "abx<BS>c", "zz<^U>ok go", then ^D (see user/bin/ttytest.c)
+#  3. interactive /bin/tsh: "echo hi from tsh", "cd /etc", "pwd", "exit 3"
+KEY_STAGES=(
+    "kbd: waiting|h i spc shift-t shift-1 ret"
+    "tty: waiting|a b x backspace c ret z z ctrl-u o k spc g o ret ctrl-d"
+    "tsh: TernOS shell|e c h o spc h i spc f r o m spc t s h ret c d spc slash e t c ret p w d ret e x i t spc 3 ret"
+)
 
-# Feed QEMU monitor commands on stdout: wait for the kernel's prompt, then type KEYS.
+# Feed QEMU monitor commands on stdout.
 feed_keys() {
-    local log=$1
-    for _ in $(seq 300); do
-        grep -qa "kbd: waiting" "$log" 2>/dev/null && break
-        sleep 0.1
+    local log=$1 stage prompt keys
+    for stage in "${KEY_STAGES[@]}"; do
+        prompt=${stage%%|*}; keys=${stage#*|}
+        for _ in $(seq 300); do
+            grep -qa "$prompt" "$log" 2>/dev/null && break
+            grep -qa "KERNEL PANIC" "$log" 2>/dev/null && return
+            sleep 0.1
+        done
+        sleep 0.2
+        for k in $keys; do echo "sendkey $k"; sleep 0.05; done
     done
-    for k in $KEYS; do echo "sendkey $k"; sleep 0.05; done
     # keep the monitor open until the kernel is finished (max ~20 s)
     for _ in $(seq 200); do
         grep -qaE "all done|KERNEL PANIC" "$log" 2>/dev/null && break

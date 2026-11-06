@@ -41,3 +41,29 @@ TernOS [0-9.]+ booting
 \[TEST\] user fs ok: open/read/write/lseek/readdir/stat/unlink from ring 3
 \[TEST\] elf loader ok: /bin/hello exit 42, /bin/fstest \+ /bin/ulibtest passed, /bin/segv killed, ENOENT/EACCES/ENOEXEC rejected, no frames leaked
 \[TEST\] ulibc ok: printf formats, brk, 3000 malloc/realloc/free ops, heap [0-9]+ KiB in 1 free block\(s\)
+\[TEST\] wait ok: spawn/wait exit codes, wait\(-1\) x4, ECHILD, getppid, fault status 142, chdir/getcwd
+\[TEST\] process tree ok: orphans reaped, [0-9]+ processes live, no frames leaked
+\[TEST\] tty read ok: 'abc', 'ok go' in 2 reads, backspace, \^U, \^D eof
+\[TEST\] tty ok: 2 lines, 3 chars erased, 1 eof
+# Day 23/24: shell script /etc/shtest.sh (output lines start at column 0)
+^\+ echo "script says" hi
+^script says hi
+^/etc.?$
+^  motd +[0-9]+
+^  shtest.sh +[0-9]+
+^Welcome to TernOS
+^tsh: cd: /nowhere: not found
+^\+ status.?$
+^1.?$
+^tsh: /bin/segv: killed \(exception 14\)
+^142.?$
+^tsh: nosuchprog: not found
+^up [0-9]+\.[0-9]{3} s
+^no newline, \+ echo done
+\[TEST\] shell script ok: exit 5
+# Day 23: interactive shell typed by the harness
+tern:/\$ echo hi from tsh
+^hi from tsh
+tern:/etc\$ pwd
+tern:/etc\$ exit 3
+\[TEST\] shell ok: interactive session, exit 3

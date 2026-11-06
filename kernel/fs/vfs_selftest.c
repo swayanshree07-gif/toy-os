@@ -157,3 +157,19 @@ KTEST(vfs_path_edge_cases) {
     KEXPECT(vfs_mkdir(NULL, "/dev/..") == -EEXIST);
     KEXPECT(vfs_create(NULL, "/dev/console/x", VN_FILE, &err) == NULL && err == -ENOTDIR);
 }
+
+KTEST(vfs_getpath) {
+    char buf[32];
+    int err = 0;
+    KEXPECT(vfs_getpath(vfs_root(), buf, sizeof buf) == 1 && !strcmp(buf, "/"));
+    KEXPECT(vfs_mkdir(NULL, "/gp") == 0 && vfs_mkdir(NULL, "/gp/inner") == 0);
+    struct vnode *v = vfs_lookup(NULL, "/gp/./inner/../inner", &err);
+    KEXPECT(v != NULL);
+    KEXPECT(vfs_getpath(v, buf, sizeof buf) == 9 && !strcmp(buf, "/gp/inner"));
+    KEXPECT(vfs_getpath(v, buf, 10) == 9);                /* exactly fits */
+    KEXPECT(vfs_getpath(v, buf, 9) == -ERANGE);
+    KEXPECT(vfs_unlink(NULL, "/gp/inner") == 0);
+    KEXPECT(vfs_getpath(v, buf, sizeof buf) == -ENOENT);  /* removed while held */
+    vfs_put(v);
+    KEXPECT(vfs_unlink(NULL, "/gp") == 0);
+}

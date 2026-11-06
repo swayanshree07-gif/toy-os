@@ -1,9 +1,10 @@
-/* Device nodes in /dev: console (write = text console + serial; read = end of file
- * until the TTY layer, plan Day 22), null and zero. */
+/* Device nodes in /dev: console (write = text console + serial; read = the TTY line
+ * discipline, tty.c), null and zero. */
 #include "vfs.h"
 #include "console.h"
 #include "string.h"
 #include "kernel.h"
+#include "tty.h"
 
 static long console_wr(struct vnode *v, const void *buf, size_t len, uint64_t off) {
     (void)v; (void)off;
@@ -22,6 +23,10 @@ static long eof_rd(struct vnode *v, void *buf, size_t len, uint64_t off) {
     (void)v; (void)buf; (void)len; (void)off;
     return 0;
 }
+static long console_rd(struct vnode *v, void *buf, size_t len, uint64_t off) {
+    (void)v; (void)off;
+    return tty_read(buf, len);
+}
 static long sink_wr(struct vnode *v, const void *buf, size_t len, uint64_t off) {
     (void)v; (void)buf; (void)off;
     return (long)len;
@@ -32,7 +37,7 @@ static long zero_rd(struct vnode *v, void *buf, size_t len, uint64_t off) {
     return (long)len;
 }
 
-static const struct vnode_ops console_ops = { eof_rd, console_wr };
+static const struct vnode_ops console_ops = { console_rd, console_wr };
 static const struct vnode_ops null_ops = { eof_rd, sink_wr };
 static const struct vnode_ops zero_ops = { zero_rd, sink_wr };
 

@@ -27,6 +27,7 @@
 #include "proc.h"
 #include "initrd.h"
 #include "vfs.h"
+#include "tty.h"
 
 bool g_test_mode;
 
@@ -272,6 +273,22 @@ static void test_keyboard(void) {
     kprintf("[TEST] kbd: got '%s'\n", line);
 }
 
+/* Normal boot: run the shell on the console, restarting it whenever it exits. */
+static __attribute__((noreturn)) void run_shell_forever(void) {
+    for (;;) {
+        int err = 0;
+        const char *argv[] = { "tsh", NULL };
+        kprintf("starting /bin/tsh\n");
+        struct process *p = proc_spawn_elf("/bin/tsh", argv, &err);
+        if (!p) {
+            kprintf("cannot start /bin/tsh (%d); idle.\n", err);
+            for (;;) __asm__ volatile("hlt");
+        }
+        int code = proc_wait(p, NULL);
+        kprintf("shell exited with %d, restarting\n", code);
+    }
+}
+
 void kmain(uint32_t magic, uint32_t info_addr) {
     serial_init();
 
@@ -349,6 +366,7 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     irq_init(&bi, !strstr(bi.cmdline, "noapic"));
     timer_init(TIMER_HZ);
     irq_enable();
+    serial_enable_rx_irq();
     kprintf("interrupts on: %s mode, tick %u Hz from %s\n",
             irq_mode() == IRQ_MODE_APIC ? "apic" : "pic", TIMER_HZ, timer_source());
     if (g_test_mode) { test_irq_mode(); test_timer(); }
@@ -371,7 +389,9 @@ void kmain(uint32_t magic, uint32_t info_addr) {
         }
     }
     syscall_init();
-    if (g_test_mode) { test_user(); test_elf(); }
+    proc_init();
+    tty_init();
+    if (g_test_mode) { test_user(); test_elf(); test_wait(); }
     if (strstr(bi.cmdline, "crash=stackovf")) {
         kprintf("crash test: kernel stack overflow\n");
         struct thread *t = thread_create("deep-recursion", recurse_thread, NULL);
@@ -387,7 +407,7 @@ void kmain(uint32_t magic, uint32_t info_addr) {
 
     bool have_kbd = kbd_init();
     kprintf("keyboard: %s\n", have_kbd ? "ps/2 ready" : "no 8042 controller");
-    if (g_test_mode && strstr(bi.cmdline, "kbd")) test_keyboard();
+    if (g_test_mode && strstr(bi.cmdline, "kbd")) { test_keyboard(); test_tty(); }
 
     int f = test_kprintf();
     if (f) panic("kprintf self-test: %d failures", f);
@@ -406,8 +426,9 @@ void kmain(uint32_t magic, uint32_t info_addr) {
         kprintf("fb console unavailable\n");
     }
 
+    if (g_test_mode) test_shell(strstr(bi.cmdline, "kbd") != NULL);
+
     kprintf("[TEST] all done\n");
     if (g_test_mode) qemu_exit(QEMU_EXIT_SUCCESS);
-    kprintf("idle.\n");
-    for (;;) __asm__ volatile("hlt");
+    run_shell_forever();
 }

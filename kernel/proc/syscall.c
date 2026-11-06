@@ -11,6 +11,7 @@
 #include "vfs.h"
 #include "mm.h"
 #include "pmm.h"
+#include "heap.h"
 
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -171,6 +172,72 @@ static long sys_brk(uint64_t want) {
     return (long)want;
 }
 
+#define SPAWN_ARGV_MAX   32
+#define SPAWN_ARGV_BYTES 2048
+
+/* spawn(path, argv): argv strings are copied into one kernel buffer first. */
+static long sys_spawn(uint64_t upath, uint64_t uargv) {
+    char path[VFS_PATH_MAX];
+    int rc = copy_user_str(path, upath, sizeof path);
+    if (rc) return rc;
+    const char *argv[SPAWN_ARGV_MAX + 1];
+    char *strs = kmalloc(SPAWN_ARGV_BYTES);
+    if (!strs) return -ENOMEM;
+    size_t used = 0;
+    int argc = 0;
+    for (; uargv; argc++) {
+        uint64_t slot = uargv + (uint64_t)argc * 8;
+        if (slot < uargv || !user_ok(slot, 8, false)) { rc = -EFAULT; goto out; }
+        uint64_t s = *(const uint64_t *)slot;
+        if (!s) break;
+        if (argc == SPAWN_ARGV_MAX || used == SPAWN_ARGV_BYTES) { rc = -EINVAL; goto out; }
+        rc = copy_user_str(strs + used, s, SPAWN_ARGV_BYTES - used);
+        if (rc) { if (rc == -ENAMETOOLONG) rc = -EINVAL; goto out; }
+        argv[argc] = strs + used;
+        used += strlen(strs + used) + 1;
+    }
+    argv[argc] = NULL;
+    /* no argv at all: argv[0] is the path, as a shell would pass it */
+    if (argc == 0) { argv[0] = path; argv[1] = NULL; }
+    rc = proc_spawn_child(path, argv);
+out:
+    kfree(strs);
+    return rc;
+}
+
+static long sys_wait(uint64_t pid, uint64_t ustatus) {
+    if (ustatus && !user_ok(ustatus, sizeof(int), true)) return -EFAULT;
+    int code = 0;
+    int rc = proc_wait_child((int)pid, &code);
+    /* our own memory cannot have changed while we slept (one thread per process) */
+    if (rc > 0 && ustatus) *(int *)ustatus = code;
+    return rc;
+}
+
+static long sys_chdir(uint64_t upath) {
+    char path[VFS_PATH_MAX];
+    int rc = copy_user_str(path, upath, sizeof path);
+    if (rc) return rc;
+    struct process *p = proc_current();
+    struct vnode *v = vfs_lookup(p->cwd, path, &rc);
+    if (!v) return rc;
+    if (v->type != VN_DIR) { vfs_put(v); return -ENOTDIR; }
+    struct vnode *old = p->cwd;
+    p->cwd = v;                       /* lookup's reference becomes the cwd's */
+    vfs_put(old);
+    return 0;
+}
+
+static long sys_getcwd(uint64_t ubuf, uint64_t size) {
+    char path[VFS_PATH_MAX];
+    int n = vfs_getpath(proc_current()->cwd, path, sizeof path);
+    if (n < 0) return n;
+    if ((uint64_t)n + 1 > size) return -ERANGE;
+    if (!user_ok(ubuf, (uint64_t)n + 1, true)) return -EFAULT;
+    memcpy((void *)ubuf, path, (size_t)n + 1);
+    return n;
+}
+
 static long syscall_do(struct regs *r) {
     uint64_t a0 = r->rdi, a1 = r->rsi, a2 = r->rdx;
     switch (r->rax) {
@@ -190,6 +257,17 @@ static long syscall_do(struct regs *r) {
     case SYS_stat:      return sys_path_op(r->rax, a0, a1);
     case SYS_fstat:     return sys_fstat(a0, a1);
     case SYS_brk:       return sys_brk(a0);
+    case SYS_spawn:     return sys_spawn(a0, a1);
+    case SYS_wait:      return sys_wait(a0, a1);
+    case SYS_getppid: {
+        uint64_t f = irq_save();
+        struct process *pp = proc_current()->parent;
+        int ppid = pp ? pp->pid : 0;
+        irq_restore(f);
+        return ppid;
+    }
+    case SYS_chdir:     return sys_chdir(a0);
+    case SYS_getcwd:    return sys_getcwd(a0, a1);
     default:            return -ENOSYS;
     }
 }

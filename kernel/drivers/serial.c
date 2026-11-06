@@ -1,6 +1,10 @@
-/* COM1 16550 UART driver (polling). */
+/* COM1 16550 UART driver: polled output, interrupt-driven input (IRQ 4) once
+ * serial_enable_rx_irq() has run. */
 #include "serial.h"
 #include "io.h"
+#include "idt.h"
+#include "irq.h"
+#include "tty.h"
 
 #define COM1 0x3F8
 
@@ -38,4 +42,35 @@ void serial_putc(char c) {
 
 void serial_write(const char *s) {
     while (*s) serial_putc(*s++);
+}
+
+/* ---- input ---- */
+#define RX_RING 256
+static volatile char rx[RX_RING];
+static volatile unsigned rx_head, rx_tail;
+
+static void serial_irq(struct regs *r) {
+    (void)r;
+    while (inb(COM1 + 5) & 1) {
+        char c = (char)inb(COM1);
+        unsigned next = (rx_head + 1) % RX_RING;
+        if (next != rx_tail) { rx[rx_head] = c; rx_head = next; }
+    }
+    tty_input_ready();
+}
+
+void serial_enable_rx_irq(void) {
+    if (!serial_ok) return;
+    while (inb(COM1 + 5) & 1) inb(COM1);     /* drop anything received during boot */
+    isr_set_handler(IRQ_BASE + 4, serial_irq);
+    outb(COM1 + 1, 0x01);                   /* interrupt on received data */
+    irq_unmask(4);
+}
+
+int serial_getc(void) {
+    uint64_t f = irq_save();
+    int c = -1;
+    if (rx_tail != rx_head) { c = (unsigned char)rx[rx_tail]; rx_tail = (rx_tail + 1) % RX_RING; }
+    irq_restore(f);
+    return c;
 }

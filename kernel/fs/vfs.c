@@ -130,6 +130,29 @@ static struct vnode *walk(struct vnode *cwd, const char *path, int *err, bool pa
     }
 }
 
+int vfs_getpath(struct vnode *v, char *buf, size_t size) {
+    if (size < 2) return -ERANGE;
+    mutex_lock(&vfs_lock);
+    int rc = 0;
+    if (!v->linked) { rc = -ENOENT; goto out; }
+    /* build right to left at the end of buf, then move it to the front */
+    size_t pos = size - 1;
+    buf[pos] = 0;
+    for (struct vnode *c = v; c != root; c = c->parent) {
+        size_t n = strlen(c->name);
+        if (n + 1 > pos) { rc = -ERANGE; goto out; }
+        pos -= n;
+        memcpy(buf + pos, c->name, n);
+        buf[--pos] = '/';
+    }
+    if (pos == size - 1) buf[--pos] = '/';
+    rc = (int)(size - 1 - pos);
+    memmove(buf, buf + pos, (size_t)rc + 1);
+out:
+    mutex_unlock(&vfs_lock);
+    return rc;
+}
+
 struct vnode *vfs_lookup(struct vnode *cwd, const char *path, int *err) {
     mutex_lock(&vfs_lock);
     struct vnode *v = walk(cwd, path, err, false, NULL, NULL);

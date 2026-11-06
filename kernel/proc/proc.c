@@ -14,6 +14,13 @@
 extern __attribute__((noreturn)) void enter_user(uint64_t rip, uint64_t rsp);
 
 static int next_pid = 1;
+static unsigned live_procs;
+
+/* Orphans that have exited, waiting for the reaper (linked through ->sibling). */
+static struct process *orphans;
+static struct waitq reaper_wq;
+
+unsigned proc_live_count(void) { return live_procs; }
 
 struct process *proc_current(void) {
     struct thread *t = thread_current();
@@ -61,6 +68,7 @@ static void proc_release_files(struct process *p) {
 static struct process *proc_alloc(const char *name) {
     struct process *p = kzalloc(sizeof *p);
     if (!p) return NULL;
+    waitq_init(&p->child_wq);
     for (unsigned i = 0; i < sizeof p->name - 1 && name[i]; i++) p->name[i] = name[i];
     p->pml4 = vmm_new_space();
     if (!p->pml4 || proc_setup_files(p)) {
@@ -69,6 +77,7 @@ static struct process *proc_alloc(const char *name) {
         kfree(p);
         return NULL;
     }
+    live_procs++;
     return p;
 }
 
@@ -76,6 +85,7 @@ static void proc_free_failed(struct process *p) {
     proc_release_files(p);
     if (p->pml4) vmm_destroy_space(p->pml4);
     kfree(p);
+    live_procs--;
 }
 
 static int map_stack(struct process *p) {
@@ -93,6 +103,12 @@ static int proc_start(struct process *p) {
     if (!p->thread) { irq_restore(f); return -ENOMEM; }
     p->thread->proc = p;
     p->thread->cr3 = p->pml4;
+    /* the caller's process (NULL for kernel threads) becomes the parent */
+    p->parent = proc_current();
+    if (p->parent) {
+        p->sibling = p->parent->children;
+        p->parent->children = p;
+    }
     irq_restore(f);
     return 0;
 }
@@ -179,12 +195,32 @@ struct process *proc_spawn_elf(const char *path, const char *const *argv, int *e
     return p;
 }
 
+static void push_orphan(struct process *p) {
+    p->sibling = orphans;
+    orphans = p;
+    waitq_wake_one(&reaper_wq);
+}
+
 __attribute__((noreturn)) void proc_exit(int code) {
     struct process *p = proc_current();
     kassert(p);
     irq_enable();                 /* closing files may take the VFS mutex */
     proc_release_files(p);
-    thread_exit(code);
+    irq_disable();
+    /* Children outlive us as orphans; those that already exited go to the reaper now,
+     * the others when they exit. */
+    for (struct process *c = p->children, *next; c; c = next) {
+        next = c->sibling;
+        c->parent = NULL;
+        c->orphan = true;
+        if (c->exited) push_orphan(c);
+    }
+    p->children = NULL;
+    p->exited = true;
+    p->exit_code = code;
+    if (p->parent) waitq_wake_all(&p->parent->child_wq);
+    else if (p->orphan) push_orphan(p);
+    thread_exit(code);            /* (kernel-spawned processes: the spawner waits) */
 }
 
 void proc_thread_reaped(struct thread *t) {
@@ -203,7 +239,58 @@ int proc_wait(struct process *p, struct process *info) {
     p->thread = NULL;
     if (info) *info = *p;
     kfree(p);
+    live_procs--;
     return code;
+}
+
+/* Frees orphans once they have exited. */
+static void reaper_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        uint64_t f = irq_save();
+        while (!orphans) waitq_sleep(&reaper_wq);
+        struct process *p = orphans;
+        orphans = p->sibling;
+        irq_restore(f);
+        proc_wait(p, NULL);
+    }
+}
+
+void proc_init(void) {
+    waitq_init(&reaper_wq);
+    struct thread *t = thread_create("reaper", reaper_thread, NULL);
+    kassert(t);
+}
+
+int proc_spawn_child(const char *path, const char *const *argv) {
+    int err = 0;
+    struct process *c = proc_spawn_elf(path, argv, &err);
+    return c ? c->pid : err;
+}
+
+int proc_wait_child(int pid, int *code) {
+    struct process *p = proc_current();
+    kassert(p);
+    uint64_t f = irq_save();
+    struct process *found;
+    for (;;) {
+        bool any = false;
+        found = NULL;
+        for (struct process *c = p->children; c; c = c->sibling) {
+            if (pid != -1 && c->pid != pid) continue;
+            any = true;
+            if (c->exited) { found = c; break; }
+        }
+        if (found || !any) break;
+        waitq_sleep(&p->child_wq);
+    }
+    if (!found) { irq_restore(f); return -ECHILD; }
+    for (struct process **pp = &p->children; *pp; pp = &(*pp)->sibling)
+        if (*pp == found) { *pp = found->sibling; break; }
+    irq_restore(f);
+    int cpid = found->pid;
+    *code = proc_wait(found, NULL);   /* the thread may still be finishing: joins it */
+    return cpid;
 }
 
 __attribute__((noreturn)) void proc_user_fault(struct regs *r) {

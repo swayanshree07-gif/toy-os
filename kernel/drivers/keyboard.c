@@ -5,6 +5,7 @@
 #include "idt.h"
 #include "irq.h"
 #include "timer.h"
+#include "tty.h"
 
 #define KBD_DATA 0x60
 #define KBD_STATUS 0x64     /* read */
@@ -67,6 +68,7 @@ static void handle_scancode(uint8_t sc) {
 static void kbd_irq(struct regs *r) {
     (void)r;
     while (inb(KBD_STATUS) & 1) handle_scancode(inb(KBD_DATA));
+    tty_input_ready();
 }
 
 static bool wait_write(void) {

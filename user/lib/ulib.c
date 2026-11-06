@@ -44,6 +44,13 @@ char *strchr(const char *s, int c) {
     }
 }
 
+int atoi(const char *s) {
+    int neg = 0, v = 0;
+    if (*s == '-') { neg = 1; s++; }
+    while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
+    return neg ? -v : v;
+}
+
 struct out { char *buf; size_t size, len; };
 static void put(struct out *o, char c) {
     if (o->len + 1 < o->size) o->buf[o->len] = c;

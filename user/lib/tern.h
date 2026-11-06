@@ -35,6 +35,12 @@ static inline void yield(void)                            { SC0(SYS_yield); }
 static inline void sleep_ms(uint64_t ms)                  { SC1(SYS_sleep_ms, ms); }
 static inline uint64_t uptime_ms(void)                    { return (uint64_t)SC0(SYS_uptime_ms); }
 static inline long brk(uintptr_t addr)                    { return SC1(SYS_brk, addr); }
+/* Day 21: processes */
+static inline int spawn(const char *path, const char *const *argv) { return (int)SC2(SYS_spawn, path, argv); }
+static inline int wait(int pid, int *status)              { return (int)SC2(SYS_wait, pid, status); }
+static inline int getppid(void)                           { return (int)SC0(SYS_getppid); }
+static inline int chdir(const char *p)                    { return (int)SC1(SYS_chdir, p); }
+static inline long getcwd(char *buf, size_t n)            { return SC2(SYS_getcwd, buf, n); }
 
 void *malloc(size_t n);
 void free(void *p);
@@ -50,6 +56,7 @@ size_t strlen(const char *s);
 int strcmp(const char *a, const char *b);
 int strncmp(const char *a, const char *b, size_t n);
 char *strchr(const char *s, int c);
+int atoi(const char *s);         /* optional '-', decimal digits */
 
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap);
 int snprintf(char *buf, size_t size, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
