@@ -37,9 +37,9 @@ static long zero_rd(struct vnode *v, void *buf, size_t len, uint64_t off) {
     return (long)len;
 }
 
-static const struct vnode_ops console_ops = { console_rd, console_wr };
-static const struct vnode_ops null_ops = { eof_rd, sink_wr };
-static const struct vnode_ops zero_ops = { zero_rd, sink_wr };
+static const struct vnode_ops console_ops = { .read = console_rd, .write = console_wr };
+static const struct vnode_ops null_ops = { .read = eof_rd, .write = sink_wr };
+static const struct vnode_ops zero_ops = { .read = zero_rd, .write = sink_wr };
 
 static void add_dev(const char *path, const struct vnode_ops *ops) {
     int err = 0;

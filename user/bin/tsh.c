@@ -9,11 +9,17 @@
  * remembers its exit status ("status" builtin prints it).
  * Redirections for programs: `< file` (stdin), `> file` (stdout, truncate),
  * `>> file` (stdout, append), `2> file` (stderr). The program runs in the foreground:
- * Ctrl-C kills it (status 130). */
+ * Ctrl-C kills it (status 130).
+ * Pipelines (Day 10 session): `a | b | c` connects stdout of each program to stdin of
+ * the next through kernel pipes (a redirection given for a stage wins over the pipe).
+ * All stages share one process group (the first stage's pid), which becomes the
+ * foreground group, so Ctrl-C stops the whole pipeline. The status is the last
+ * stage's. Builtins can't be used in a pipeline. */
 #include "tern.h"
 
 #define LINE_MAX 256
 #define ARGS_MAX 16
+#define STAGES_MAX 8
 
 static int last_status;
 
@@ -92,6 +98,8 @@ static const char *errstr(int e) {
     case EINVAL: return "invalid argument";
     case EISDIR: return "is a directory";
     case EEXIST: return "already exists";
+    case EAGAIN: return "too many processes";
+    case EMFILE: return "too many open files";
     default: return "error";
     }
 }
@@ -99,6 +107,7 @@ static const char *errstr(int e) {
 static void help(void) {
     printf("tsh builtins: cd [dir]  pwd  exit [code]  status  help\n"
            "redirection: prog < in > out (>> appends, 2> stderr); Ctrl-C stops prog\n"
+           "pipelines: prog1 | prog2 | ...  (e.g. ls /bin | grep t | wc)\n"
            "programs in /bin: ");
     int fd = open("/bin", O_RDONLY | O_DIRECTORY);
     struct tern_dirent d;
@@ -131,36 +140,106 @@ static bool open_redirs(const struct redir *rd, int *fds) {
     return true;
 }
 
-static void run_program(char **argv, const struct redir *rd) {
-    char path[LINE_MAX];
-    if (strchr(argv[0], '/')) snprintf(path, sizeof path, "%s", argv[0]);
-    else snprintf(path, sizeof path, "/bin/%s", argv[0]);
-    int fds[3];
-    if (!open_redirs(rd, fds)) { last_status = 1; return; }
-    int pid = spawn_fds(path, (const char *const *)argv, fds);
-    close_fds(fds);                    /* the child holds its own references */
-    if (pid < 0) {
-        printf("tsh: %s: %s\n", argv[0], errstr(pid));
-        last_status = 127;
-        return;
+static void report(const char *name, int st) {
+    if (st == TERN_EXIT_INTR) printf("tsh: %s: interrupted\n", name);
+    else if (st == TERN_EXIT_KILLED) printf("tsh: %s: killed\n", name);
+    else if (st >= 128 && st < 160) printf("tsh: %s: killed (exception %d)\n", name, st - 128);
+}
+
+struct stage {
+    char *argv[ARGS_MAX + 1];
+    struct redir rd;
+    int pid;
+};
+
+/* Run n program stages connected by pipes, wait for all of them. */
+static void run_pipeline(struct stage *sg, int n) {
+    int prev_rd = -1;             /* read end of the pipe from the previous stage */
+    int pgid = 0, spawned = 0;
+    for (int i = 0; i < n; i++) {
+        sg[i].pid = -1;
+        char path[LINE_MAX];
+        char **argv = sg[i].argv;
+        if (strchr(argv[0], '/')) snprintf(path, sizeof path, "%s", argv[0]);
+        else snprintf(path, sizeof path, "/bin/%s", argv[0]);
+        int fds[3], pp[2] = { -1, -1 };
+        if (!open_redirs(&sg[i].rd, fds)) { last_status = 1; break; }
+        if (i + 1 < n) {
+            int rc = pipe(pp);
+            if (rc < 0) { printf("tsh: pipe: %s\n", errstr(rc)); close_fds(fds); last_status = 1; break; }
+        }
+        if (fds[0] < 0 && prev_rd >= 0) { fds[0] = prev_rd; prev_rd = -1; }
+        if (fds[1] < 0 && pp[1] >= 0) { fds[1] = pp[1]; pp[1] = -1; }
+        int pid = spawn_fds(path, (const char *const *)argv, fds);
+        close_fds(fds);                /* the child holds its own references */
+        if (prev_rd >= 0) close(prev_rd);
+        if (pp[1] >= 0) close(pp[1]);
+        prev_rd = pp[0];
+        if (pid < 0) {
+            printf("tsh: %s: %s\n", argv[0], errstr(pid));
+            last_status = 127;
+            break;
+        }
+        if (!pgid) pgid = pid;
+        setpgid(pid, pgid);
+        if (spawned == 0) setfg(pgid);
+        sg[i].pid = pid;
+        spawned++;
     }
-    setfg(pid);
-    int st = 0;
-    int r = wait(pid, &st);
+    if (prev_rd >= 0) close(prev_rd);  /* (only left over when a stage failed) */
+    for (int i = 0; i < n; i++) {
+        if (sg[i].pid < 0) continue;
+        int st = 0;
+        if (wait(sg[i].pid, &st) != sg[i].pid) { printf("tsh: wait failed\n"); continue; }
+        if (i == n - 1) last_status = st;
+        report(sg[i].argv[0], st);
+    }
     setfg(0);
-    if (r != pid) { printf("tsh: wait failed\n"); return; }
-    last_status = st;
-    if (st == TERN_EXIT_INTR) printf("tsh: %s: interrupted\n", argv[0]);
-    else if (st == TERN_EXIT_KILLED) printf("tsh: %s: killed\n", argv[0]);
-    else if (st >= 128 && st < 160) printf("tsh: %s: killed (exception %d)\n", argv[0], st - 128);
+}
+
+static bool is_builtin(const char *w) {
+    return !strcmp(w, "exit") || !strcmp(w, "cd") || !strcmp(w, "pwd") ||
+           !strcmp(w, "status") || !strcmp(w, "help");
+}
+
+/* Split at '|' outside quotes and comments. Returns the number of segments. */
+static int split_pipes(char *line, char **seg, int max) {
+    int n = 0;
+    seg[n++] = line;
+    bool q = false;
+    for (char *p = line; *p; p++) {
+        if (*p == '"') q = !q;
+        else if (!q && *p == '#') break;
+        else if (!q && *p == '|') {
+            if (n == max) return -1;
+            *p = 0;
+            seg[n++] = p + 1;
+        }
+    }
+    return n;
 }
 
 /* Returns false when the shell should exit (exit code in *code). */
 static bool run_line(char *line, int *code) {
-    char *argv[ARGS_MAX + 1];
-    struct redir rd = { 0 };
-    int argc = parse(line, argv, &rd);
-    if (argc <= 0) { if (argc < 0) last_status = 2; return true; }
+    static struct stage sg[STAGES_MAX];
+    char *seg[STAGES_MAX];
+    int nseg = split_pipes(line, seg, STAGES_MAX);
+    if (nseg < 0) { printf("tsh: too many pipeline stages\n"); last_status = 2; return true; }
+    int argc = 0;
+    for (int i = 0; i < nseg; i++) {
+        memset(&sg[i].rd, 0, sizeof sg[i].rd);
+        argc = parse(seg[i], sg[i].argv, &sg[i].rd);
+        if (argc < 0) { last_status = 2; return true; }
+        if (argc == 0 && nseg > 1) { printf("tsh: empty pipeline stage\n"); last_status = 2; return true; }
+        if (nseg > 1 && is_builtin(sg[i].argv[0])) {
+            printf("tsh: %s: builtins can't be used in a pipeline\n", sg[i].argv[0]);
+            last_status = 2;
+            return true;
+        }
+    }
+    if (argc == 0) return true;
+    if (nseg > 1) { run_pipeline(sg, nseg); return true; }
+    char **argv = sg[0].argv;
     if (!strcmp(argv[0], "exit")) {
         *code = argc > 1 ? atoi(argv[1]) : last_status;
         return false;
@@ -178,7 +257,7 @@ static bool run_line(char *line, int *code) {
         help();
         last_status = 0;
     } else {
-        run_program(argv, &rd);
+        run_pipeline(sg, 1);
     }
     return true;
 }

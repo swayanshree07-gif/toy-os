@@ -40,7 +40,9 @@ int tty_set_fg(int pid) {
 
 bool tty_intr(void) {
     if (!inited || !fg_pid) return false;
-    if (proc_kill(fg_pid, TERN_EXIT_INTR) != 0) { fg_pid = 0; return false; }
+    /* fg_pid names a process group (every process starts in its own group, so a
+     * plain pid works too); a pipeline's processes share the group */
+    if (proc_kill_group(fg_pid, TERN_EXIT_INTR) == 0) { fg_pid = 0; return false; }
     stats.fg_kills++;
     console_write("^C\n");
     return true;

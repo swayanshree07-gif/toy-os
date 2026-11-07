@@ -8,6 +8,8 @@
 #include "timer.h"
 #include "kernel.h"
 #include "kprintf.h"
+#include "vfs.h"
+#include "heap.h"
 
 static int run_prog(const char *path) {
     int err = 0;
@@ -101,4 +103,46 @@ void test_shell(bool interactive) {
     code = proc_wait(p, NULL);
     if (code != 3) panic("tsh interactive: exit %d, wanted 3", code);
     kprintf("[TEST] shell ok: interactive session, exit %d\n", code);
+}
+
+/* Day 10 session: pipes, process groups, rename, process limit (user/bin/pipetest.c),
+ * then the system-call fuzzer with one seed, and twice with another: the last run must leave the
+ * frame count, VFS node count and pipe count exactly where they were. */
+static int run_argv(const char *const *argv) {
+    int err = 0;
+    struct process *p = proc_spawn_elf(argv[0], argv, &err);
+    if (!p) panic("spawning %s failed (%d)", argv[0], err);
+    return proc_wait(p, NULL);
+}
+
+void test_pipes(void) {
+    unsigned live0 = proc_live_count();
+    uint64_t t0 = timer_ms();
+    int code = run_prog("/bin/pipetest");
+    if (code) panic("pipetest failed check %d", code);
+    wait_live(live0);
+    kprintf("pipetest took %lu ms\n", timer_ms() - t0);
+    const char *fz2[] = { "/bin/fuzz", "100000", "777", NULL };
+    if ((code = run_argv(fz2))) panic("fuzz (seed 777) exit %d", code);
+    const char *fz[] = { "/bin/fuzz", "100000", "12345", NULL };
+    if ((code = run_argv(fz))) panic("fuzz (warm-up) exit %d", code);
+    wait_live(live0);
+    uint64_t frames0 = pmm_free_frames();
+    struct vfs_stats v0, v1;
+    struct pipe_stats p0, p1;
+    vfs_get_stats(&v0);
+    pipe_get_stats(&p0);
+    if ((code = run_argv(fz))) panic("fuzz exit %d", code);
+    wait_live(live0);
+    vfs_get_stats(&v1);
+    pipe_get_stats(&p1);
+    struct heap_stats hs;
+    heap_check(&hs);
+    if (pmm_free_frames() != frames0)
+        panic("fuzz: frames leaked: %lu -> %lu", frames0, pmm_free_frames());
+    if (v1.nodes != v0.nodes || p1.live != p0.live || p1.live != 0)
+        panic("fuzz: vfs nodes %lu -> %lu, pipes live %lu -> %lu", v0.nodes, v1.nodes,
+              p0.live, p1.live);
+    kprintf("[TEST] robustness ok: 3x100000 fuzzed syscalls, kernel heap consistent, no frames/"
+            "nodes/pipes leaked, %lu pipe bytes moved so far\n", p1.bytes);
 }

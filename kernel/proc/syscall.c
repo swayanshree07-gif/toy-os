@@ -134,6 +134,31 @@ static long sys_path_op(uint64_t nr, uint64_t upath, uint64_t ust) {
     return 0;
 }
 
+static long sys_pipe(uint64_t ufds) {
+    if (!user_ok(ufds, 2 * sizeof(int), true)) return -EFAULT;
+    struct process *p = proc_current();
+    int fd[2], n = 0;
+    for (int i = 0; i < PROC_MAX_FDS && n < 2; i++)
+        if (!p->fds[i]) fd[n++] = i;
+    if (n < 2) return -EMFILE;
+    struct file *r, *w;
+    int rc = pipe_create(&r, &w);
+    if (rc) return rc;
+    p->fds[fd[0]] = r;
+    p->fds[fd[1]] = w;
+    ((int *)ufds)[0] = fd[0];
+    ((int *)ufds)[1] = fd[1];
+    return 0;
+}
+
+static long sys_rename(uint64_t ufrom, uint64_t uto) {
+    char from[VFS_PATH_MAX], to[VFS_PATH_MAX];
+    int rc = copy_user_str(from, ufrom, sizeof from);
+    if (!rc) rc = copy_user_str(to, uto, sizeof to);
+    if (rc) return rc;
+    return vfs_rename(proc_current()->cwd, from, to);
+}
+
 static long sys_fstat(uint64_t fd, uint64_t ust) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
@@ -271,6 +296,11 @@ static long sys_sysinfo(uint64_t uinfo) {
     vfs_get_stats(&vs);
     si.vfs_nodes = vs.nodes;
     si.vfs_bytes = vs.file_bytes;
+    struct pipe_stats ps;
+    pipe_get_stats(&ps);
+    si.pipes_live = ps.live;
+    si.pipes_created = ps.created;
+    si.pipe_bytes = ps.bytes;
     memcpy((void *)uinfo, &si, sizeof si);
     return 0;
 }
@@ -294,7 +324,16 @@ static long syscall_do(struct regs *r) {
     case SYS_write:     return sys_write(a0, a1, a2);
     case SYS_getpid:    return proc_current()->pid;
     case SYS_yield:     thread_yield(); return 0;
-    case SYS_sleep_ms:  thread_sleep_ms(a0 > 3600000 ? 3600000 : a0); return 0;
+    case SYS_sleep_ms:
+        if (a0 == 0) thread_yield();    /* (a 0-tick sleep would wait for the next tick) */
+        else {
+            /* check-then-sleep with interrupts off, so a kill can't slip in between
+             * (proc_kill wakes sleepers that are already on the sleep list) */
+            uint64_t f = irq_save();
+            if (!proc_kill_pending()) thread_sleep_ms(a0 > 3600000 ? 3600000 : a0);
+            irq_restore(f);
+        }
+        return 0;
     case SYS_uptime_ms: return (long)timer_ms();
     case SYS_open:      return sys_open(a0, a1);
     case SYS_close:     return sys_close(a0);
@@ -323,6 +362,14 @@ static long syscall_do(struct regs *r) {
     case SYS_setfg:     return tty_set_fg((int)a0);
     case SYS_sysinfo:   return sys_sysinfo(a0);
     case SYS_proclist:  return sys_proclist(a0, a1);
+    case SYS_pipe:      return sys_pipe(a0);
+    case SYS_setpgid:
+        if ((int64_t)a0 < 0 || a0 > 0x7fffffff || a1 > 0x7fffffff) return -EINVAL;
+        return proc_setpgid((int)a0, (int)a1);
+    case SYS_getpgid:
+        if ((int64_t)a0 < 0 || a0 > 0x7fffffff) return -ESRCH;
+        return proc_getpgid((int)a0);
+    case SYS_rename:    return sys_rename(a0, a1);
     default:            return -ENOSYS;
     }
 }
@@ -331,6 +378,8 @@ static long syscall_do(struct regs *r) {
 void syscall_dispatch(struct regs *r) {
     kassert(proc_current());
     irq_enable();                       /* syscalls may block and are preemptible */
+    proc_check_kill();                  /* a kill that arrived while we were in ring 3
+                                           but before any interrupt: don't start a sleep */
     r->rax = (uint64_t)syscall_do(r);
     proc_check_kill();                  /* kill() / Ctrl-C: exit instead of returning */
     irq_disable();

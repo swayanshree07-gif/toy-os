@@ -47,6 +47,20 @@ static inline int kill(int pid)                           { return (int)SC1(SYS_
 static inline int setfg(int pid)                          { return (int)SC1(SYS_setfg, pid); }
 static inline int sysinfo(struct tern_sysinfo *si)        { return (int)SC1(SYS_sysinfo, si); }
 static inline int proclist(struct tern_procinfo *b, unsigned max) { return (int)SC2(SYS_proclist, b, max); }
+static inline int pipe(int fds[2])                        { return (int)SC1(SYS_pipe, fds); }
+static inline int setpgid(int pid, int pgid)              { return (int)SC2(SYS_setpgid, pid, pgid); }
+static inline int getpgid(int pid)                        { return (int)SC1(SYS_getpgid, pid); }
+static inline int rename(const char *a, const char *b)    { return (int)SC2(SYS_rename, a, b); }
+/* write all of buf (pipes may take it in pieces); bytes written or the error */
+static inline long write_all(int fd, const void *b, size_t n) {
+    size_t done = 0;
+    while (done < n) {
+        long r = write(fd, (const char *)b + done, n - done);
+        if (r <= 0) return done ? (long)done : (r ? r : -EIO);
+        done += (size_t)r;
+    }
+    return (long)done;
+}
 
 void *malloc(size_t n);
 void free(void *p);

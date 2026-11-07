@@ -25,6 +25,7 @@ static struct vnode *node_new(enum vnode_type type, const char *name, size_t nle
 
 static void node_free(struct vnode *v) {
     kassert(v->refs == 0 && !v->linked && !v->children);
+    if (v->type == VN_DEV && v->ops && v->ops->release) v->ops->release(v);
     file_bytes -= v->cap;
     kfree(v->data);
     kfree(v);
@@ -202,6 +203,46 @@ int vfs_unlink(struct vnode *cwd, const char *path) {
     return v ? 0 : err;
 }
 
+int vfs_rename(struct vnode *cwd, const char *from, const char *to) {
+    int err = 0;
+    const char *name;
+    size_t nlen;
+    mutex_lock(&vfs_lock);
+    struct vnode *src = walk(cwd, from, &err, false, NULL, NULL);
+    struct vnode *d = src ? walk(cwd, to, &err, true, &name, &nlen) : NULL;
+    if (!d) goto out;
+    if (src == root || !src->parent) { err = -EBUSY; goto out; }
+    if (d->type != VN_DIR) { err = -ENOTDIR; goto out; }
+    if (src->type == VN_DIR)                        /* not into its own subtree */
+        for (struct vnode *a = d; a; a = a->parent)
+            if (a == src) { err = -EINVAL; goto out; }
+    struct vnode *old = dir_find(d, name, nlen);
+    if (old == src) goto out;                       /* same name: nothing to do */
+    if (old) {
+        if (old->type == VN_DIR && src->type != VN_DIR) { err = -EISDIR; goto out; }
+        if (old->type != VN_DIR && src->type == VN_DIR) { err = -ENOTDIR; goto out; }
+        if (old->type == VN_DIR && old->children) { err = -ENOTEMPTY; goto out; }
+        dir_unlink(d, old);
+    }
+    hold_locked(src);
+    dir_unlink(src->parent, src);
+    memcpy(src->name, name, nlen);
+    src->name[nlen] = 0;
+    dir_link(d, src);
+    put_locked(src);
+out:
+    mutex_unlock(&vfs_lock);
+    return err;
+}
+
+struct vnode *vfs_new_anon(const struct vnode_ops *ops, void *priv) {
+    mutex_lock(&vfs_lock);
+    struct vnode *v = node_new(VN_DEV, "", 0);
+    if (v) { v->ops = ops; v->priv = priv; v->refs = 1; }
+    mutex_unlock(&vfs_lock);
+    return v;
+}
+
 int vfs_stat(struct vnode *v, struct tern_stat *st) {
     mutex_lock(&vfs_lock);
     st->type = v->type;
@@ -270,6 +311,7 @@ void file_close(struct file *f) {
     mutex_lock(&vfs_lock);
     kassert(f->refs > 0);
     bool last = --f->refs == 0;
+    if (last && f->node->type == VN_DEV && f->node->ops->close) f->node->ops->close(f->node, f);
     if (last) put_locked(f->node);
     mutex_unlock(&vfs_lock);
     if (last) kfree(f);
@@ -280,6 +322,7 @@ long file_read(struct file *f, void *buf, size_t len) {
     struct vnode *v = f->node;
     if (v->type == VN_DIR) return -EISDIR;
     if (v->type == VN_DEV) {
+        if (v->ops->fread) return v->ops->fread(f, buf, len);
         if (!v->ops->read) return -EINVAL;
         return v->ops->read(v, buf, len, f->off);
     }
@@ -316,6 +359,7 @@ long file_write(struct file *f, const void *buf, size_t len) {
     if (!can_write(f)) return -EBADF;
     struct vnode *v = f->node;
     if (v->type == VN_DEV) {
+        if (v->ops->fwrite) return v->ops->fwrite(f, buf, len);
         if (!v->ops->write) return -EINVAL;
         return v->ops->write(v, buf, len, f->off);
     }

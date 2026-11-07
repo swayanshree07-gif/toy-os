@@ -43,7 +43,16 @@
 #define SYS_sysinfo   23    /* sysinfo(struct tern_sysinfo *) -> 0 */
 #define SYS_proclist  24    /* proclist(struct tern_procinfo *buf, max) -> number of
                                processes (fills at most max entries) */
-#define SYS_COUNT     25
+/* Day 10 session: pipes, process groups, rename */
+#define SYS_pipe      25    /* pipe(int fds[2]) -> 0; fds[0] = read end, fds[1] = write end */
+#define SYS_setpgid   26    /* setpgid(pid, pgid) -> 0. pid 0 = self; pid must be the caller
+                               or one of its children; pgid 0 = pid. Every process starts
+                               in its own group (pgid = pid). setfg() names a group: Ctrl-C
+                               kills every process in it */
+#define SYS_getpgid   27    /* getpgid(pid) -> pgid (pid 0 = self) */
+#define SYS_rename    28    /* rename(from, to) -> 0 (POSIX semantics, see vfs.h) */
+#define SYS_COUNT     29
+#define PROC_MAX_LIVE 64    /* spawn fails with -EAGAIN beyond this many processes */
 #define TERN_EXIT_INTR   130   /* killed by Ctrl-C */
 #define TERN_EXIT_KILLED 137   /* killed by kill() */
 #define USER_HEAP_MAX (64ull << 20)
@@ -54,6 +63,9 @@
 #define EIO     5
 #define EBADF   9
 #define ECHILD  10
+#define EAGAIN  11
+#define EBUSY   16
+#define EPIPE   32
 #define ERANGE  34
 #define ENOMEM  12
 #define EACCES  13
@@ -108,6 +120,7 @@ struct tern_sysinfo {
     uint64_t procs, threads;                 /* live processes / kernel threads */
     uint64_t switches, preemptions;          /* scheduler counters since boot */
     uint64_t vfs_nodes, vfs_bytes;           /* RAM FS nodes and file data bytes */
+    uint64_t pipes_live, pipes_created, pipe_bytes;  /* Day 10 session */
 };
 #define TERN_PS_RUNNING  0
 #define TERN_PS_READY    1
@@ -121,6 +134,8 @@ struct tern_procinfo {
     uint64_t ticks;          /* timer ticks spent running */
     uint64_t mem_pages;      /* user heap pages (brk) */
     char name[24];
+    int32_t pgid;            /* process group (Day 10 session) */
+    uint32_t reserved2;
 };
 #endif
 #endif

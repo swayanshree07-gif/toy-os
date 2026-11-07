@@ -173,3 +173,60 @@ KTEST(vfs_getpath) {
     vfs_put(v);
     KEXPECT(vfs_unlink(NULL, "/gp") == 0);
 }
+
+/* Day 10 session: rename keeps an open file usable and moves a held cwd-like dir. */
+KTEST(vfs_rename) {
+    int err = 0;
+    struct vfs_stats s0, s1;
+    vfs_get_stats(&s0);
+    KEXPECT(vfs_mkdir(NULL, "/rnk") == 0 && vfs_mkdir(NULL, "/rnk/d") == 0);
+    KEXPECT(vfs_write_file("/rnk/f", "abc", 3) == 3);
+    struct file *f;
+    KEXPECT(vfs_open(NULL, "/rnk/f", O_RDONLY, &f) == 0);
+    struct vnode *d = vfs_lookup(NULL, "/rnk/d", &err);
+    KEXPECT(vfs_rename(NULL, "/rnk/f", "/rnk/d/g") == 0);
+    KEXPECT(vfs_rename(NULL, "/rnk/d", "/rnk/e") == 0);
+    char buf[40];
+    KEXPECT(file_read(f, buf, sizeof buf) == 3 && !memcmp(buf, "abc", 3));
+    KEXPECT(vfs_getpath(d, buf, sizeof buf) == 6 && !strcmp(buf, "/rnk/e"));
+    struct vnode *g = vfs_lookup(d, "g", &err);
+    KEXPECT(g && g == f->node);
+    vfs_put(g);
+    KEXPECT(vfs_rename(d, "..", "x") == -EEXIST || vfs_rename(d, "..", "x") == -EINVAL);
+    KEXPECT(vfs_rename(NULL, "/rnk", "/rnk/e/inside") == -EINVAL);
+    KEXPECT(vfs_rename(NULL, "/rnk/e/g", "/rnk/e/") == -EISDIR);   /* onto the dir itself */
+    file_close(f);
+    vfs_put(d);
+    KEXPECT(vfs_unlink(NULL, "/rnk/e/g") == 0 && vfs_unlink(NULL, "/rnk/e") == 0);
+    KEXPECT(vfs_unlink(NULL, "/rnk") == 0);
+    vfs_get_stats(&s1);
+    KEXPECT(s1.nodes == s0.nodes);
+}
+
+/* Pipe ring buffer wrap-around, EOF and EPIPE without blocking (kernel caller). */
+KTEST(pipe_ring_buffer) {
+    struct pipe_stats p0, p1;
+    pipe_get_stats(&p0);
+    struct file *r, *w;
+    KEXPECT(pipe_create(&r, &w) == 0);
+    static char big[PIPE_BUF_SIZE], out[PIPE_BUF_SIZE];
+    for (int i = 0; i < PIPE_BUF_SIZE; i++) big[i] = (char)(i * 7 + 1);
+    for (int round = 0; round < 5; round++) {             /* positions move around the ring */
+        KEXPECT(file_write(w, big, 1000) == 1000);
+        KEXPECT(file_read(r, out, 1000) == 1000 && !memcmp(out, big, 1000));
+    }
+    KEXPECT(file_write(w, big, PIPE_BUF_SIZE) == PIPE_BUF_SIZE);   /* exactly full, wraps */
+    KEXPECT(file_read(r, out, PIPE_BUF_SIZE) == PIPE_BUF_SIZE && !memcmp(out, big, PIPE_BUF_SIZE));
+    KEXPECT(file_write(r, big, 1) == -EBADF && file_read(w, out, 1) == -EBADF);
+    KEXPECT(file_seek(r, 0, SEEK_SET) == -EINVAL);
+    KEXPECT(file_write(w, "xy", 2) == 2);
+    file_close(w);
+    KEXPECT(file_read(r, out, 10) == 2 && file_read(r, out, 10) == 0);   /* data, then EOF */
+    file_close(r);
+    KEXPECT(pipe_create(&r, &w) == 0);
+    file_close(r);
+    KEXPECT(file_write(w, "z", 1) == -EPIPE);
+    file_close(w);
+    pipe_get_stats(&p1);
+    KEXPECT(p1.live == p0.live && p1.created == p0.created + 2);
+}

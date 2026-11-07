@@ -300,12 +300,38 @@ void waitq_sleep(struct waitq *q) {
     schedule();
 }
 
+void waitq_sleep_intr(struct waitq *q) {
+    current->intr_q = q;
+    waitq_sleep(q);
+    current->intr_q = NULL;
+}
+
+bool sched_wake_blocked(struct thread *t) {
+    uint64_t f = irq_save();
+    struct waitq *q = t->intr_q;
+    bool found = false;
+    if (q && t->state == T_BLOCKED) {
+        struct thread *prev = NULL;
+        for (struct thread *c = q->head; c; prev = c, c = c->next) {
+            if (c != t) continue;
+            if (prev) prev->next = t->next; else q->head = t->next;
+            if (q->tail == t) q->tail = prev;
+            found = true;
+            break;
+        }
+        if (found) { t->intr_q = NULL; make_ready(t); }
+    }
+    irq_restore(f);
+    return found;
+}
+
 bool waitq_wake_one(struct waitq *q) {
     uint64_t f = irq_save();
     struct thread *t = q->head;
     if (t) {
         q->head = t->next;
         if (!q->head) q->tail = NULL;
+        t->intr_q = NULL;
         make_ready(t);
     }
     irq_restore(f);

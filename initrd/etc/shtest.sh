@@ -33,4 +33,22 @@ ps
 mem
 kill 99999
 status
+# Day 10 session: pipelines, seq/grep/head/yes/tee, cp/mv
+seq 1 300 | grep 7 | wc
+yes tern | head -n 3
+mkdir /w2
+seq 5 | tee /w2/nums | grep -v 3
+cat /w2/nums | wc
+cp /w2/nums /w2/copy
+mv /w2/copy /w2/moved
+ls /w2
+mv /w2 /w2/inner
+head -n 2 /w2/moved
+grep -c 4 < /w2/moved
+seq 3 | nosuchprog | wc
+status
+echo a | cd /
+echo a | | wc
+echo "a|b" | wc
+rm /w2/nums /w2/moved /w2
 exit 5

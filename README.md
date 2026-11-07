@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 9 session; plan Days 1–24 done, most of 25–26)
+## Status (Day 10 session; plan Days 1–26 done)
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -86,19 +86,33 @@ Working:
   is built without FPU/SSE code), so user programs may use floating point and SSE
 - **System information**: `sysinfo` (memory, heap, scheduler, RAM FS counters) and
   `proclist` (pid, parent, state, CPU time, heap pages, name) system calls
+- **Pipes**: `pipe(fds)` gives a read end and a write end over a 4 KiB ring buffer (an
+  anonymous device vnode, `kernel/fs/pipe.c`). Reads block while it is empty, writes while
+  it is full; end of file once every writer is closed, `-EPIPE` once every reader is
+  closed; `kill` interrupts both (interruptible wait queues, `waitq_sleep_intr`)
+- **Process groups**: `setpgid` / `getpgid`; every process starts in its own group, and
+  the foreground (`setfg`) is a group, so Ctrl-C stops a whole pipeline
+- **rename** with POSIX semantics (replace a file / empty directory, no moving a
+  directory into itself), and a limit of 64 live processes (`spawn` → `-EAGAIN`)
 - **Shell `tsh`** (`user/bin/tsh.c`): prompt with the cwd, words and `"quoted words"`,
   `#` comments, builtins `cd`, `pwd`, `exit [code]`, `status`, `help`; other words run
   `/bin/<name>` (or a path) and wait for it, in the foreground (Ctrl-C stops it).
   Redirections `< in`, `> out`, `>> out` (append), `2> err` (passed to the child through
-  `spawn`'s fd argument). `tsh FILE` runs a script. A normal boot starts the shell on the
+  `spawn`'s fd argument). Pipelines `a | b | c` (up to 8 stages, one process group).
+  `tsh FILE` runs a script. A normal boot starts the shell on the
   console and restarts it when it exits
 - **Programs**: `echo [-n]`, `cat`, `ls`, `uptime`, `ps`, `mem`, `kill`, `rm`, `mkdir`,
-  `wc`, `spin` (busy loop, for trying Ctrl-C)
+  `wc`, `grep [-v] [-c]`, `head [-n N]`, `seq`, `yes`, `tee [-a]`, `cp`, `mv`,
+  `spin` (busy loop, for trying Ctrl-C)
+- **Robustness**: `/bin/fuzz` throws random system calls with hostile arguments (NULL,
+  kernel and non-canonical addresses, buffers ending at the edge of mapped memory, huge
+  lengths, bad fds) at the kernel; the test runs 3×100000 calls and checks that the
+  kernel heap is consistent and no frames, VFS nodes or pipes leaked
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: `exec`, pipes, background jobs, redirection for shell builtins, an ISO image,
-SMP.
+Not yet: `exec`, background jobs (`&`), redirection/pipes for shell builtins, an ISO
+image, SMP.
 
 ### Adding a user program
 
@@ -160,10 +174,15 @@ During each positive test boot the QEMU monitor is on stdin and the script types
 with `sendkey` in stages, each started by a prompt in the serial log (`KEY_STAGES` in
 `tests/run_tests.sh`): `hi T!` for the kernel keyboard test, edited lines and Ctrl-D for
 `/bin/ttytest`, and an interactive `tsh` session (`echo`, `cd`, `pwd`, `spin 20000`, then
-Ctrl-C once spin has started, `status` → 130, `exit 3`). Before that, `tsh /etc/shtest.sh`
+Ctrl-C once spin has started, `status` → 130, then the pipeline `yes | /bin/spin 30000`
+and Ctrl-C, which must stop both stages, `exit 3`). Before that, `tsh /etc/shtest.sh`
 runs a script whose output lines are checked by markers (including redirection, `wc`,
-`rm`, `mkdir`, `ps`, `mem`, `kill`). `/bin/killtest` checks kill and spawn redirection
-from ring 3, and two concurrent `/bin/fputest` processes check that xmm0–15, x87 and
+`rm`, `mkdir`, `ps`, `mem`, `kill`, pipelines, `grep`/`head`/`seq`/`yes`/`tee`, `cp`/`mv`).
+`/bin/killtest` checks kill and spawn redirection from ring 3, `/bin/pipetest` checks
+pipes (EOF, EPIPE, a 108894-byte transfer through the 4 KiB buffer, a 3-stage pipeline,
+kill while blocked in a pipe read or write, EMFILE), process groups, rename and the
+process limit, `/bin/fuzz` runs the system-call fuzzer (3×100000 calls, then leak
+checks), and two concurrent `/bin/fputest` processes check that xmm0–15, x87 and
 double-precision results survive context switches (the test fails if the fxrstor is
 removed).
 
@@ -190,7 +209,7 @@ kernel/proc/          proc.c (processes, process tree, reaper, fds, argv, ring-3
                       faults), elf.c (ELF64 loader), syscall.c, self-tests
 kernel/user/          blobs.S: flat ring-3 test programs for the low-level ring-3 tests
 kernel/fs/            initrd.c (TRD archive parser, CRC-32), vfs.c (VFS tree + RAM FS,
-                      open files), devfs.c (/dev nodes), self-tests
+                      open files, rename), devfs.c (/dev nodes), pipe.c, self-tests
 kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_selftest.c
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser

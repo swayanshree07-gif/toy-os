@@ -47,6 +47,9 @@ TernOS [0-9.]+ booting
 \[TEST\] kill ok: spinner, sleeper \([0-9]+ ms\), waiter, self killed with 137; spawn fds redirect; proclist [0-9]+ procs; sysinfo
 ^fputest 1: ok, sum 1644[0-9]+/1e9
 ^fputest 2: ok, sum 1644[0-9]+/1e9
+\[TEST\] pipes ok: eof/epipe/ebadf, 108894 bytes seq->pipe, 3-stage pipeline, kill while blocked, emfile, pgid, rename, [0-9]+ spawns then EAGAIN; [0-9]+ pipes created
+\[TEST\] fuzz ok: [0-9]+ calls, [0-9]+ ok, [0-9]+ errors \([0-9]+ ENOSYS, [0-9]+ EFAULT\), /fuzz removed
+\[TEST\] robustness ok: 3x100000 fuzzed syscalls, kernel heap consistent, no frames/nodes/pipes leaked
 \[TEST\] fpu ok: 2 processes kept xmm0-15/x87/double state over [0-9]+\+[0-9]+ switches, [0-9]+ fxsaves
 \[TEST\] tty read ok: 'abc', 'ok go' in 2 reads, backspace, \^U, \^D eof
 \[TEST\] tty ok: 2 lines, 3 chars erased, 1 eof
@@ -86,6 +89,21 @@ TernOS [0-9.]+ booting
 ^ramfs: [0-9]+ nodes
 ^sched: [0-9]+ processes, [0-9]+ threads
 ^kill: 99999: no such process
+# Day 10 session: pipelines in the shell script
+^57 57 208
+^tern
+^\+ seq 5 \| tee /w2/nums \| grep -v 3
+^4
+^5 5 10
+^  nums +10
+^  moved +10
+^mv: /w2 -> /w2/inner: can't move a directory into itself
+^tsh: nosuchprog: not found
+^127.?$
+^tsh: cd: builtins can't be used in a pipeline
+^tsh: empty pipeline stage
+^1 1 4
+^pipes: [0-9]+ open, [0-9]+ created, [0-9]+ bytes moved
 \[TEST\] shell script ok: exit 5
 # Day 23: interactive shell typed by the harness
 tern:/\$ echo hi from tsh
@@ -96,5 +114,10 @@ tern:/etc\$ spin 20000
 ^\^C
 ^tsh: spin: interrupted
 ^130
+# (both stages of the pipeline are in the foreground group: Ctrl-C stops both)
+tern:/etc\$ yes \| /bin/spin 30000
+^spin: started \(pid [0-9]+, 30000 ms\)
+^tsh: yes: interrupted
+^tsh: /bin/spin: interrupted
 tern:/etc\$ exit 3
 \[TEST\] shell ok: interactive session, exit 3

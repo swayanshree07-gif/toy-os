@@ -33,6 +33,7 @@ struct thread {
     uint64_t cr3;                  /* address space (kernel PML4 for kernel threads) */
     struct process *proc;          /* owning user process, NULL for kernel threads */
     uint8_t *fpu;                  /* 512-byte fxsave area (16-aligned), user threads */
+    struct waitq *intr_q;          /* queue of an interruptible sleep (waitq_sleep_intr) */
 };
 
 struct process;
@@ -64,6 +65,11 @@ void waitq_init(struct waitq *q);
 void waitq_sleep(struct waitq *q);
 bool waitq_wake_one(struct waitq *q);
 unsigned waitq_wake_all(struct waitq *q);
+/* Like waitq_sleep, but sched_wake_blocked(t) may take the thread off the queue early
+ * (used by kill). Callers must re-check their condition in a loop. */
+void waitq_sleep_intr(struct waitq *q);
+/* Wake t if it is in waitq_sleep_intr. Returns true if it was. */
+bool sched_wake_blocked(struct thread *t);
 
 struct sched_stats { uint64_t switches, preemptions, threads_created, stacks_live, fpu_saves; };
 void sched_get_stats(struct sched_stats *s);

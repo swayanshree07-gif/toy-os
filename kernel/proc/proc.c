@@ -46,6 +46,7 @@ struct process *proc_current(void) {
 static void user_thread_start(void *arg) {
     struct process *p = arg;
     /* The scheduler already loaded p->pml4 into CR3 when it switched to us. */
+    proc_check_kill();                  /* killed before it ever ran */
     enter_user(p->entry, p->stack_top);
 }
 
@@ -129,6 +130,7 @@ static int proc_start(struct process *p) {
     /* The new thread must not run before it knows its address space. */
     uint64_t f = irq_save();
     p->pid = next_pid++;
+    p->pgid = p->pid;
     p->thread = thread_create(p->name, user_thread_start, p);
     if (!p->thread) { irq_restore(f); return -ENOMEM; }
     p->thread->proc = p;
@@ -217,6 +219,7 @@ struct process *proc_spawn_elf_fds(const char *path, const char *const *argv,
 
     const char *name = path;
     for (const char *q = path; *q; q++) if (*q == '/' && q[1]) name = q + 1;
+    if (live_procs >= PROC_MAX_LIVE) { kfree(img); *err = -EAGAIN; return NULL; }
     struct process *p = proc_alloc(name, files);
     if (!p) { kfree(img); *err = -ENOMEM; return NULL; }
     uint64_t brk;
@@ -355,10 +358,46 @@ int proc_kill(int pid, int code) {
     /* Interrupt what it may be blocked in: a sleep, wait() for a child, a tty read.
      * Those loops re-check their condition, so the extra wakeups are harmless. */
     sched_wake_sleeper(p->thread);
+    sched_wake_blocked(p->thread);    /* pipes */
     waitq_wake_all(&p->child_wq);
     tty_input_ready();
     irq_restore(f);
     return 0;
+}
+
+int proc_kill_group(int pgid, int code) {
+    int n = 0;
+    uint64_t f = irq_save();
+    for (struct process *p = all_procs; p; p = p->all_next)
+        if (p->pgid == pgid && p->thread && !p->exited && proc_kill(p->pid, code) == 0) n++;
+    irq_restore(f);
+    return n;
+}
+
+int proc_setpgid(int pid, int pgid) {
+    struct process *self = proc_current();
+    if (pid == 0) pid = self->pid;
+    if (pgid == 0) pgid = pid;
+    if (pgid < 0) return -EINVAL;
+    uint64_t f = irq_save();
+    struct process *t = NULL;
+    if (pid == self->pid) t = self;
+    else
+        for (struct process *c = self->children; c; c = c->sibling)
+            if (c->pid == pid) { t = c; break; }
+    int rc = -ESRCH;
+    if (t && !t->exited) { t->pgid = pgid; rc = 0; }
+    irq_restore(f);
+    return rc;
+}
+
+int proc_getpgid(int pid) {
+    uint64_t f = irq_save();
+    struct process *p = pid ? all_procs : proc_current();
+    while (pid && p && p->pid != pid) p = p->all_next;
+    int rc = p ? p->pgid : -ESRCH;
+    irq_restore(f);
+    return rc;
 }
 
 bool proc_kill_pending(void) {
@@ -387,6 +426,7 @@ unsigned proc_list(struct tern_procinfo *out, unsigned max) {
         o->ticks = t ? t->ticks_run : p->ticks_run;
         o->mem_pages = p->brk_base ? (ALIGN_UP(p->brk, PAGE_SIZE) - p->brk_base) / PAGE_SIZE : 0;
         memcpy(o->name, p->name, sizeof o->name);
+        o->pgid = p->pgid;
     }
     irq_restore(f);
     return n;

@@ -41,6 +41,7 @@ struct process {
     struct process *children, *sibling;
     struct waitq child_wq;            /* parent sleeps here in wait() */
     bool exited;                      /* proc_exit ran; the thread is about to die */
+    int pgid;                         /* process group (= pid unless setpgid) */
     int kill_code;                    /* != 0: kill pending, exit with this code */
     struct process *all_next;         /* list of all live processes (pid lookup) */
     bool orphan;
@@ -82,6 +83,11 @@ int proc_spawn_child(const char *path, const char *const *argv, struct file *con
 int proc_kill(int pid, int code);
 /* True if the current thread belongs to a process with a kill pending. */
 bool proc_kill_pending(void);
+/* Kill every live process in group pgid; returns how many. */
+int proc_kill_group(int pgid, int code);
+/* setpgid/getpgid syscalls (see syscall_nr.h). */
+int proc_setpgid(int pid, int pgid);
+int proc_getpgid(int pid);
 /* Before returning to ring 3: exits the current process if a kill is pending. */
 void proc_check_kill(void);
 /* Snapshot of all live processes (SYS_proclist); returns the total count. */
@@ -105,6 +111,7 @@ void test_elf(void);
 void test_wait(void);
 void test_kill(void);
 void test_fpu(void);
+void test_pipes(void);
 void test_tty(void);
 void test_shell(bool interactive);
 

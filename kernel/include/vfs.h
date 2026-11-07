@@ -22,9 +22,19 @@
 enum vnode_type { VN_FILE = TERN_FT_FILE, VN_DIR = TERN_FT_DIR, VN_DEV = TERN_FT_DEV };
 
 struct vnode;
+struct file;
 struct vnode_ops {                   /* device nodes only; files/dirs use ramfs */
     long (*read)(struct vnode *v, void *buf, size_t len, uint64_t off);
     long (*write)(struct vnode *v, const void *buf, size_t len, uint64_t off);
+    /* optional: an open file description on v is closed for the last time (called
+     * with the VFS lock held; must not sleep) */
+    void (*close)(struct vnode *v, struct file *f);
+    /* optional: v is being freed; release v->priv */
+    void (*release)(struct vnode *v);
+    /* optional, used instead of read/write when set: the open file is passed (pipes
+     * need to know which end) */
+    long (*fread)(struct file *f, void *buf, size_t len);
+    long (*fwrite)(struct file *f, const void *buf, size_t len);
 };
 
 struct vnode {
@@ -39,6 +49,7 @@ struct vnode {
     uint8_t *data;                   /* files: contents [0, size), capacity cap */
     uint64_t size, cap;
     const struct vnode_ops *ops;     /* devices */
+    void *priv;                      /* devices: driver data (pipes) */
 };
 
 /* An open file description (shared by dup'ed fds in the future). */
@@ -66,6 +77,12 @@ void vfs_put(struct vnode *v);
 struct vnode *vfs_create(struct vnode *cwd, const char *path, enum vnode_type type, int *err);
 int vfs_mkdir(struct vnode *cwd, const char *path);
 int vfs_unlink(struct vnode *cwd, const char *path);   /* files, devices, empty dirs */
+/* Move/rename `from` to `to` (POSIX rename semantics: an existing file target is
+ * replaced, an existing empty directory is replaced by a directory; a directory can't
+ * be moved into its own subtree, -EINVAL). */
+int vfs_rename(struct vnode *cwd, const char *from, const char *to);
+/* A device vnode that is not in the tree (pipes). Returned held (refs 1). */
+struct vnode *vfs_new_anon(const struct vnode_ops *ops, void *priv);
 int vfs_stat(struct vnode *v, struct tern_stat *st);
 
 /* Open files. */
@@ -87,6 +104,15 @@ int vfs_populate_from_initrd(void);
 
 struct vfs_stats { uint64_t nodes, file_bytes; };
 void vfs_get_stats(struct vfs_stats *s);
+
+/* Pipes (pipe.c): a 4 KiB ring buffer with a read end and a write end. Reads block
+ * while it is empty and writers exist (0 = end of file once all writers closed);
+ * writes block while it is full and return -EPIPE once all readers closed. Both are
+ * interrupted by kill (-EINTR, or the bytes transferred so far). */
+#define PIPE_BUF_SIZE 4096
+int pipe_create(struct file **rd, struct file **wr);
+struct pipe_stats { uint64_t live, created, bytes, blocked_reads, blocked_writes, epipes; };
+void pipe_get_stats(struct pipe_stats *s);
 
 void test_vfs(void);
 

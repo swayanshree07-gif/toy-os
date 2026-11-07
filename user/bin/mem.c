@@ -15,5 +15,7 @@ int main(void) {
     printf("sched: %lu processes, %lu threads, %lu switches, %lu preemptions\n",
            (unsigned long)si.procs, (unsigned long)si.threads,
            (unsigned long)si.switches, (unsigned long)si.preemptions);
+    printf("pipes: %lu open, %lu created, %lu bytes moved\n", (unsigned long)si.pipes_live,
+           (unsigned long)si.pipes_created, (unsigned long)si.pipe_bytes);
     return 0;
 }

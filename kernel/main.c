@@ -391,7 +391,7 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     syscall_init();
     proc_init();
     tty_init();
-    if (g_test_mode) { test_user(); test_elf(); test_wait(); test_kill(); test_fpu(); }
+    if (g_test_mode) { test_user(); test_elf(); test_wait(); test_kill(); test_fpu(); test_pipes(); }
     if (strstr(bi.cmdline, "crash=stackovf")) {
         kprintf("crash test: kernel stack overflow\n");
         struct thread *t = thread_create("deep-recursion", recurse_thread, NULL);
