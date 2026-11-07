@@ -37,4 +37,11 @@ const struct acpi_sdt *acpi_find(const char sig[4], unsigned n);
 const struct madt_info *acpi_madt(void);
 unsigned acpi_table_count(void);
 
+/* Day 11 session: what's needed to enter S5 (soft off). */
+struct acpi_s5 {
+    uint16_t pm1a_cnt, pm1b_cnt, smi_cmd;
+    uint8_t acpi_enable, slp_typa, slp_typb;
+};
+bool acpi_s5_info(struct acpi_s5 *out);
+
 #endif

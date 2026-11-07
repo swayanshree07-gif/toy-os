@@ -112,6 +112,7 @@ void test_wait(void);
 void test_kill(void);
 void test_fpu(void);
 void test_pipes(void);
+void test_fbdev(void);
 void test_tty(void);
 void test_shell(bool interactive);
 

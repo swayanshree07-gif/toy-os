@@ -1,5 +1,6 @@
 /* User processes: address space setup, ring-3 entry, fault handling. */
 #include "proc.h"
+#include "fbdev.h"
 #include "sched.h"
 #include "vmm.h"
 #include "pmm.h"
@@ -244,6 +245,7 @@ __attribute__((noreturn)) void proc_exit(int code) {
     kassert(p);
     irq_enable();                 /* closing files may take the VFS mutex */
     proc_release_files(p);
+    fbdev_release_by(p->pid);     /* give the screen back to the console (Day 11) */
     irq_disable();
     /* Children outlive us as orphans; those that already exited go to the reaper now,
      * the others when they exit. */

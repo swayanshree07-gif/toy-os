@@ -146,3 +146,67 @@ void test_pipes(void) {
     kprintf("[TEST] robustness ok: 3x100000 fuzzed syscalls, kernel heap consistent, no frames/"
             "nodes/pipes leaked, %lu pipe bytes moved so far\n", p1.bytes);
 }
+
+/* Day 11 session: user framebuffer access. /bin/demo --test checks the syscall errors,
+ * fills the screen with a known pattern and exits while still owning the screen. Here
+ * we check that the pattern really reached the framebuffer, that console output
+ * meanwhile doesn't draw over it, and that the console repaints itself (including the
+ * text printed while it was hidden) once the process is gone. */
+#include "fb.h"
+#include "console.h"
+#include "fbdev.h"
+#include "string.h"
+
+static bool fb_pattern_ok(void) {
+    static const uint32_t pts[][2] = { {0, 0}, {1, 0}, {5, 3}, {100, 37}, {317, 199} };
+    for (unsigned i = 0; i < sizeof pts / sizeof pts[0]; i++) {
+        uint32_t x = pts[i][0], y = pts[i][1], v = ((x * 7) ^ (y * 13)) & 0xffffff;
+        if (fb_getpixel(x, y) != fb_rgb((uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v))
+            return false;
+    }
+    uint32_t x = g_fb.width - 1, y = g_fb.height - 1, v = ((x * 7) ^ (y * 13)) & 0xffffff;
+    return fb_getpixel(x, y) == fb_rgb((uint8_t)(v >> 16), (uint8_t)(v >> 8), (uint8_t)v);
+}
+
+static bool console_shows(const char *s) {
+    uint32_t cols, rows;
+    con_get_size(&cols, &rows);
+    size_t n = strlen(s);
+    for (uint32_t r = 0; r < rows; r++) {
+        size_t i = 0;
+        while (i < n && i < cols && con_cell_matches((uint32_t)i, r, s[i])) i++;
+        if (i == n) return true;
+    }
+    return false;
+}
+
+void test_fbdev(void) {
+    if (!con_active()) { kprintf("[TEST] fbdev skipped: no framebuffer\n"); return; }
+    unsigned live0 = proc_live_count();
+    uint64_t frames0 = pmm_free_frames();
+    int err = 0;
+    const char *argv[] = { "demo", "--test", NULL };
+    struct process *p = proc_spawn_elf("/bin/demo", argv, &err);
+    if (!p) panic("spawning demo failed (%d)", err);
+    uint64_t end = timer_ms() + 3000;
+    while (!(fbdev_owner() == p->pid && fb_pattern_ok())) {
+        if (timer_ms() > end || p->exited) panic("fbdev: test pattern never appeared");
+        thread_sleep_ms(5);
+    }
+    if (!con_suspended()) panic("fbdev: console not suspended while the screen is owned");
+    const char *hidden = "fbdev: printed while hidden";
+    kprintf("%s\n", hidden);
+    if (!fb_pattern_ok()) panic("fbdev: console drew over the owned screen");
+    int code = proc_wait(p, NULL);
+    if (code) panic("demo --test failed check at line %d", code);
+    if (fbdev_owner() != 0 || con_suspended()) panic("fbdev: screen not released at exit");
+    if (fb_pattern_ok()) panic("fbdev: console not repainted");
+    if (!console_shows(hidden)) panic("fbdev: text printed while hidden is missing");
+    wait_live(live0);
+    uint64_t nb, np;
+    fbdev_stats(&nb, &np);
+    kprintf("[TEST] fbdev ok: %ux%u, %lu blits, released at exit, console repainted, "
+            "frames %s\n", g_fb.width, g_fb.height, nb,
+            pmm_free_frames() == frames0 ? "back" : "LEAKED");
+    if (pmm_free_frames() != frames0) panic("fbdev: frames leaked");
+}

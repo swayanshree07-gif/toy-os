@@ -3,7 +3,10 @@
 #  1. Positive images "test" (APIC mode) and "test-pic" (cmdline "noapic": legacy 8259 +
 #     PIT): kernel self-tests must pass (exit 33) and every marker in tests/expected.txt
 #     plus tests/pass-<image>.txt must appear.
-#  2. Negative tests: each tests/crash-<name>.txt boots build/esp-crash-<name>; the kernel
+#  2. The release ISO (build/ternos.iso, booted with -cdrom): the shell runs /bin/demo
+#     (framebuffer animation, screenshotted with QEMU's screendump while it runs and again
+#     after it exits) and then /bin/poweroff, so QEMU must exit 0 (ACPI S5).
+#  3. Negative tests: each tests/crash-<name>.txt boots build/esp-crash-<name>; the kernel
 #     must panic (exit 35) and print every marker in that file.
 set -u
 BUILD=${1:-build}
@@ -24,10 +27,20 @@ KEY_STAGES=(
     "30000 ms)|ctrl-c s t a t u s ret e x i t spc 3 ret"
 )
 
-# Feed QEMU monitor commands on stdout.
+# Release ISO session. A key "!cmd:arg" sends the monitor command "cmd arg" instead.
+ISO_STAGES=(
+    "tsh: TernOS shell|d e m o spc 9 0 ret"
+    "demo: running|!screendump:$BUILD/screen-demo.ppm"
+    "demo: 90 frames|!screendump:$BUILD/screen-console.ppm"
+    "demo: 90 frames|p o w e r o f f ret"
+)
+
+# Feed QEMU monitor commands on stdout: feed_keys <log> <stage array name> <end regex>
 feed_keys() {
-    local log=$1 stage prompt keys
-    for stage in "${KEY_STAGES[@]}"; do
+    local log=$1 stage prompt keys k
+    local -n stages=$2
+    local endre=$3
+    for stage in "${stages[@]}"; do
         prompt=${stage%%|*}; keys=${stage#*|}
         for _ in $(seq 300); do
             grep -qa "$prompt" "$log" 2>/dev/null && break
@@ -35,36 +48,46 @@ feed_keys() {
             sleep 0.1
         done
         sleep 0.2
-        for k in $keys; do echo "sendkey $k"; sleep 0.05; done
+        for k in $keys; do
+            if [[ $k == !* ]]; then k=${k#!}; echo "${k%%:*} ${k#*:}"; sleep 0.5
+            else echo "sendkey $k"; sleep 0.05; fi
+        done
     done
     # keep the monitor open until the kernel is finished (max ~20 s)
     for _ in $(seq 200); do
-        grep -qaE "all done|KERNEL PANIC" "$log" 2>/dev/null && break
+        grep -qaE "$endre|KERNEL PANIC" "$log" 2>/dev/null && break
         sleep 0.1
     done
 }
 
-# boot <image> <expected qemu status> <marker file> <expect panic: 0/1> [keys: 0/1]
+# boot <image> <expected qemu status> <marker file> <expect panic: 0/1>
+#      [key stages array name, or 0] [end regex] [media: "esp" or "iso"]
 boot() {
-    local img=$1 want=$2 markers=$3 want_panic=$4 keys=${5:-0}
+    local img=$1 want=$2 markers=$3 want_panic=$4 keys=${5:-0} endre=${6:-all done}
+    local media=${7:-esp}
     local log="$BUILD/serial-$img.log" fail=0
     echo "== $img"
     rm -f "$log"
-    # QEMU's vvfat write-back corrupts files when OVMF writes NvVars to the ESP, so
-    # every boot gets a throwaway copy of the pristine build output.
-    local esp="$BUILD/boot-esp-$img"
-    rm -rf "$esp" && cp -r "$BUILD/esp-$img" "$esp"
+    local drive
+    if [ "$media" = iso ]; then
+        drive=(-cdrom "$BUILD/ternos.iso")
+    else
+        # QEMU's vvfat write-back corrupts files when OVMF writes NvVars to the ESP, so
+        # every boot gets a throwaway copy of the pristine build output.
+        local esp="$BUILD/boot-esp-$img"
+        rm -rf "$esp" && cp -r "$BUILD/esp-$img" "$esp"
+        drive=(-drive format=raw,file=fat:rw:"$esp")
+    fi
     local status
-    if [ "$keys" = 1 ]; then
+    if [ "$keys" != 0 ]; then
         # shellcheck disable=SC2086
-        feed_keys "$log" | timeout 60 ${QEMU:-qemu-system-x86_64} $QEMU_COMMON \
-            -drive format=raw,file=fat:rw:"$esp" \
+        feed_keys "$log" "$keys" "$endre" | timeout 60 ${QEMU:-qemu-system-x86_64} \
+            $QEMU_COMMON "${drive[@]}" \
             -display none -serial file:"$log" -monitor stdio > "$BUILD/monitor-$img.log"
         status=${PIPESTATUS[1]}
     else
         # shellcheck disable=SC2086
-        timeout 60 ${QEMU:-qemu-system-x86_64} $QEMU_COMMON \
-            -drive format=raw,file=fat:rw:"$esp" \
+        timeout 60 ${QEMU:-qemu-system-x86_64} $QEMU_COMMON "${drive[@]}" \
             -display none -serial file:"$log" -monitor none
         status=$?
     fi
@@ -92,8 +115,26 @@ boot() {
 
 for img in test test-pic; do
     cat "$here/expected.txt" "$here/pass-$img.txt" > "$BUILD/markers-$img.txt"
-    boot "$img" 33 "$BUILD/markers-$img.txt" 0 1
+    boot "$img" 33 "$BUILD/markers-$img.txt" 0 KEY_STAGES
 done
+
+# Release ISO: demo + screenshots + poweroff
+rm -f "$BUILD"/screen-demo.ppm "$BUILD"/screen-console.ppm
+boot iso 0 "$here/iso.txt" 0 ISO_STAGES "poweroff:" iso
+# The demo screenshot must be a busy picture (gradient sky, sea, terns), the one after
+# it exits the text console again (mostly its background colour 101828).
+check_shot() {
+    local f=$1 what=$2 cond=$3 out
+    if [ ! -f "$f" ]; then echo "  FAIL  screenshot $f missing"; overall=1; return; fi
+    out=$(python3 -I "$here/../tools/ppmstat.py" "$f")
+    if python3 -I -c "import sys; d=dict(kv.split('=') for kv in sys.argv[1].split()[1:]); sys.exit(0 if ($cond) else 1)" "$out"; then
+        echo "  PASS  $what: $out"
+    else
+        echo "  FAIL  $what: $out"; overall=1
+    fi
+}
+check_shot "$BUILD/screen-demo.ppm" "demo screenshot" "int(d['colors']) > 500 and int(d['top_share']) < 40"
+check_shot "$BUILD/screen-console.ppm" "console screenshot after demo" "d['top']=='101828' and int(d['top_share']) > 80"
 for f in "$here"/crash-*.txt; do
     name=$(basename "$f" .txt)
     boot "$name" 35 "$f" 1

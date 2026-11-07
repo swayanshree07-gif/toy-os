@@ -51,7 +51,15 @@
                                kills every process in it */
 #define SYS_getpgid   27    /* getpgid(pid) -> pgid (pid 0 = self) */
 #define SYS_rename    28    /* rename(from, to) -> 0 (POSIX semantics, see vfs.h) */
-#define SYS_COUNT     29
+/* Day 11 session: framebuffer access for user programs, and power off */
+#define SYS_fbinfo    29    /* fbinfo(struct tern_fbinfo *) -> 0, -ENODEV without a framebuffer */
+#define SYS_fbacquire 30    /* fbacquire(1) takes the framebuffer (the text console stops
+                               drawing; -EBUSY if another process has it); fbacquire(0)
+                               gives it back and the console redraws. Released at exit. */
+#define SYS_fbblit    31    /* fbblit(const struct tern_fbblit *) -> 0; owner only (-EPERM).
+                               Pixels are 0x00RRGGBB; the kernel converts if needed. */
+#define SYS_poweroff  32    /* poweroff() -> ACPI S5 (QEMU exits); -EIO if that failed */
+#define SYS_COUNT     33
 #define PROC_MAX_LIVE 64    /* spawn fails with -EAGAIN beyond this many processes */
 #define TERN_EXIT_INTR   130   /* killed by Ctrl-C */
 #define TERN_EXIT_KILLED 137   /* killed by kill() */
@@ -73,6 +81,8 @@
 #define EEXIST  17
 #define ENOTDIR 20
 #define EISDIR  21
+#define EPERM   1
+#define ENODEV  19
 #define EINVAL  22
 #define EMFILE  24
 #define ENOSPC  28
@@ -121,6 +131,17 @@ struct tern_sysinfo {
     uint64_t switches, preemptions;          /* scheduler counters since boot */
     uint64_t vfs_nodes, vfs_bytes;           /* RAM FS nodes and file data bytes */
     uint64_t pipes_live, pipes_created, pipe_bytes;  /* Day 10 session */
+};
+struct tern_fbinfo {
+    uint32_t width, height;      /* pixels */
+    uint32_t owner;              /* pid holding the framebuffer, 0 = text console */
+    uint32_t reserved;
+};
+struct tern_fbblit {
+    const uint32_t *pixels;      /* w x h pixels, row i at (char *)pixels + i * stride */
+    uint32_t x, y, w, h;         /* destination rectangle, must lie inside the screen */
+    uint32_t stride;             /* bytes, >= 4 * w */
+    uint32_t reserved;
 };
 #define TERN_PS_RUNNING  0
 #define TERN_PS_READY    1

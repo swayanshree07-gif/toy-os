@@ -2,11 +2,21 @@
 #include "console.h"
 #include "fb.h"
 #include "serial.h"
+#include "string.h"
+#include "idt.h"
 
 #define PX_W (CELL_W * CON_SCALE)
 #define PX_H (CELL_H * CON_SCALE)
 
-static bool active;
+/* Shadow copy of the screen text (Day 11 session): while a user program owns the
+ * framebuffer (con_suspend), output only goes here, and con_resume() repaints from it.
+ * Screens with more cells than this use only the top-left CON_MAX_COLS x CON_MAX_ROWS. */
+#define CON_MAX_COLS 200
+#define CON_MAX_ROWS 100
+struct cell { char ch; uint32_t fg, bg; };
+static struct cell shadow[CON_MAX_ROWS][CON_MAX_COLS];
+
+static bool active, suspended;
 static uint32_t cols, rows, cx, cy;
 static uint32_t fg, bg;
 
@@ -14,6 +24,8 @@ bool con_init(void) {
     if (!g_fb.base) return false;
     cols = g_fb.width / PX_W;
     rows = g_fb.height / PX_H;
+    if (cols > CON_MAX_COLS) cols = CON_MAX_COLS;
+    if (rows > CON_MAX_ROWS) rows = CON_MAX_ROWS;
     if (!cols || !rows) return false;
     fg = fb_rgb(0xE0, 0xE6, 0xF0);
     bg = fb_rgb(0x10, 0x18, 0x28);
@@ -28,7 +40,9 @@ void con_set_color(uint32_t f, uint32_t b) { fg = f; bg = b; }
 
 void con_clear(void) {
     if (!active) return;
-    fb_fill_rect(0, 0, g_fb.width, g_fb.height, bg);
+    for (uint32_t r = 0; r < rows; r++)
+        for (uint32_t c = 0; c < cols; c++) shadow[r][c] = (struct cell){ ' ', fg, bg };
+    if (!suspended) fb_fill_rect(0, 0, g_fb.width, g_fb.height, bg);
     cx = cy = 0;
 }
 
@@ -47,14 +61,40 @@ static bool cell_unit_on(const uint8_t *g, uint32_t u, uint32_t v) {
     return (g[v - 1] >> (FONT_W - 1 - u)) & 1;
 }
 
-static void draw_cell(uint32_t col, uint32_t row, char ch) {
-    const uint8_t *g = glyph_for(ch);
+static void paint_cell(uint32_t col, uint32_t row) {
+    const struct cell *c = &shadow[row][col];
+    const uint8_t *g = glyph_for(c->ch);
     uint32_t x0 = col * PX_W, y0 = row * PX_H;
     for (uint32_t v = 0; v < CELL_H; v++)
         for (uint32_t u = 0; u < CELL_W; u++)
             fb_fill_rect(x0 + u * CON_SCALE, y0 + v * CON_SCALE, CON_SCALE, CON_SCALE,
-                         cell_unit_on(g, u, v) ? fg : bg);
+                         cell_unit_on(g, u, v) ? c->fg : c->bg);
 }
+
+static void draw_cell(uint32_t col, uint32_t row, char ch) {
+    shadow[row][col] = (struct cell){ ch, fg, bg };
+    if (!suspended) paint_cell(col, row);
+}
+
+void con_suspend(void) {
+    uint64_t f = irq_save();
+    suspended = true;
+    irq_restore(f);
+}
+
+void con_resume(void) {
+    uint64_t f = irq_save();
+    if (suspended && active) {
+        suspended = false;
+        fb_fill_rect(0, 0, g_fb.width, g_fb.height, bg);
+        for (uint32_t r = 0; r < rows; r++)
+            for (uint32_t c = 0; c < cols; c++) paint_cell(c, r);
+    }
+    suspended = false;
+    irq_restore(f);
+}
+
+bool con_suspended(void) { return suspended; }
 
 bool con_cell_matches(uint32_t col, uint32_t row, char ch) {
     if (!active || col >= cols || row >= rows) return false;
@@ -69,6 +109,9 @@ bool con_cell_matches(uint32_t col, uint32_t row, char ch) {
 }
 
 static void scroll(void) {
+    memmove(shadow[0], shadow[1], sizeof shadow[0] * (rows - 1));
+    for (uint32_t c = 0; c < cols; c++) shadow[rows - 1][c] = (struct cell){ ' ', fg, bg };
+    if (suspended) return;
     fb_move_rows(0, PX_H, (rows - 1) * PX_H);
     fb_fill_rect(0, (rows - 1) * PX_H, g_fb.width, PX_H, bg);
 }
@@ -93,6 +136,9 @@ void con_putc(char c) {
 
 void console_write(const char *s) {
     serial_write(s);
-    if (active)
+    if (active) {
+        uint64_t f = irq_save();      /* IRQ handlers echo too (tty) */
         while (*s) con_putc(*s++);
+        irq_restore(f);
+    }
 }

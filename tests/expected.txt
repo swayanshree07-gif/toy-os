@@ -27,6 +27,7 @@ TernOS [0-9.]+ booting
 \[TEST\] sched sleep ok: 50 ms -> [0-9]+ ms, 100 ms -> [0-9]+ ms, woke in order
 \[TEST\] sync: mutex counter 300, [0-9]+ contended locks
 \[TEST\] sync ok: producer/consumer 2x1000 items, sum [0-9]+, spinlock irq-safe
+\[TEST\] fbdev ok: [0-9]+x[0-9]+, [0-9]+ blits, released at exit, console repainted, frames back
 \[TEST\] selftest ([0-9]+)/\1 passed
 \[TEST\] ring3 ok: ran at cpl 3 \(cs=23 ss=1b\), user stack ok, #UD at 40[0-9a-f]+ trapped and killed
 \[TEST\] syscall write ok: hello from ring 3

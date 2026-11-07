@@ -3,7 +3,11 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 10 session; plan Days 1–26 done)
+## Status (Day 11 session; plan Days 1–27 done)
+
+![demo](docs/demo.png)
+
+*`/bin/demo` ("tern flight") running from the boot ISO, captured with QEMU's `screendump` by `make test`.*
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -103,16 +107,27 @@ Working:
   console and restarts it when it exits
 - **Programs**: `echo [-n]`, `cat`, `ls`, `uptime`, `ps`, `mem`, `kill`, `rm`, `mkdir`,
   `wc`, `grep [-v] [-c]`, `head [-n N]`, `seq`, `yes`, `tee [-a]`, `cp`, `mv`,
-  `spin` (busy loop, for trying Ctrl-C)
+  `spin` (busy loop, for trying Ctrl-C), `demo`, `poweroff`
 - **Robustness**: `/bin/fuzz` throws random system calls with hostile arguments (NULL,
   kernel and non-canonical addresses, buffers ending at the edge of mapped memory, huge
   lengths, bad fds) at the kernel; the test runs 3×100000 calls and checks that the
   kernel heap is consistent and no frames, VFS nodes or pipes leaked
+- **Framebuffer for user programs**: `fbinfo`, `fbacquire(1/0)` and `fbblit` system
+  calls (`kernel/drivers/fbdev.c`). One process at a time owns the screen; it draws into
+  its own memory and copies rectangles in (0x00RRGGBB pixels, every row checked against
+  its page tables). Meanwhile the text console writes only to a shadow buffer and repaints
+  the whole screen once the owner releases it or exits, faults or is killed
+- **`/bin/demo`**: "tern flight", an animation (sky gradient, sinking sun, moving sea with
+  glitter, three flapping pixel-art terns) at ~30 fps; `demo [frames]`, Ctrl-C stops it
+- **Power off**: `poweroff` system call and program: ACPI S5 using the FADT PM1 control
+  blocks and the `\_S5_` sleep type found in the DSDT (QEMU exits)
+- **Bootable ISO**: `build/ternos.iso` (GRUB EFI via `grub-mkrescue`), boots with `-cdrom`
+  under OVMF straight into the shell
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: `exec`, background jobs (`&`), redirection/pipes for shell builtins, an ISO
-image, SMP.
+Not yet: `exec`, background jobs (`&`), redirection/pipes for shell builtins, BIOS
+(non-UEFI) boot, SMP.
 
 ### Adding a user program
 
@@ -124,14 +139,16 @@ there is no `printf("%f")` yet.
 ## Requirements
 
 `clang`, `ld.lld` (any of `ld.lld`, `ld.lld-23`, … is auto-detected), `python3`,
-`grub-mkstandalone` with the x86_64-efi platform, `qemu-system-x86_64`, and OVMF
+`grub-mkstandalone` / `grub-mkrescue` with the x86_64-efi platform, `xorriso` and `mtools`
+(for the ISO), `qemu-system-x86_64`, and OVMF
 (`/usr/share/ovmf/OVMF.fd`; override with `make OVMF=/path/to/OVMF.fd`).
 
 ## Build and run
 
 ```sh
-make          # builds build/ternos.elf and build/esp/EFI/BOOT/BOOTX64.EFI
+make          # builds build/ternos.elf, build/esp/EFI/BOOT/BOOTX64.EFI and build/ternos.iso
 make run      # boots in a QEMU window, serial on the terminal; the shell starts
+make run-iso  # same, but boots build/ternos.iso as a CD-ROM (try `demo`, then `poweroff`)
 make run-headless   # no window, serial on stdout (type shell commands there), killed after 60 s
 make test     # headless boot with the "test" cmdline, checks serial markers
 tools/screenshot.sh [out.png]   # boots headless and saves a PNG of the screen
@@ -139,8 +156,10 @@ tools/screenshot.sh [out.png]   # boots headless and saves a PNG of the screen
 
 ### How booting works here
 
-This machine only has GRUB for x86_64-efi (no BIOS `i386-pc` modules) and no `mtools`, so
-`grub-mkrescue` can't build an ISO. Instead the build makes a standalone GRUB EFI binary
+This machine only has GRUB for x86_64-efi (no BIOS `i386-pc` modules), so everything boots
+through UEFI (OVMF). `build/ternos.iso` is made by `grub-mkrescue` (needs `mtools`, which
+was missing until Day 11) and boots from a CD-ROM drive. For the development and test
+images, the build makes a standalone GRUB EFI binary
 (`grub-mkstandalone`) with `grub.cfg` and the kernel inside its memdisk, puts it at
 `build/esp/EFI/BOOT/BOOTX64.EFI`, and QEMU exposes that directory to OVMF as a FAT disk
 (`-drive file=fat:rw:...`). GRUB then loads the kernel through Multiboot2.
@@ -186,6 +205,17 @@ checks), and two concurrent `/bin/fputest` processes check that xmm0–15, x87 a
 double-precision results survive context switches (the test fails if the fxrstor is
 removed).
 
+The third positive boot is the release ISO itself (`-cdrom build/ternos.iso`, normal
+cmdline): the script types `demo 90` into the shell, takes a QEMU `screendump` while the
+animation runs and another after it exits, then types `poweroff`, so QEMU must exit with
+status 0 (ACPI S5). `tests/iso.txt` holds its markers, and `tools/ppmstat.py` checks that
+the first screenshot is a busy picture (> 500 colours) and the second is the text console
+again (> 80 % console background). In the `test` images `/bin/demo --test` checks the
+framebuffer system calls (errors, ownership, a second process getting `-EBUSY`), and the
+kernel checks that its test pattern really reached the screen, that console output does
+not draw over it, and that the console is repainted (including text printed while hidden)
+after the process exits without releasing the screen.
+
 Negative tests: for every `tests/crash-<name>.txt` the script also boots the image
 `build/esp-crash-<name>` (kernel cmdline `test crash=<name>`), which must panic (exit 35)
 and print every marker in that file — e.g. an unhandled page fault must show CR2 and the
@@ -199,7 +229,8 @@ panic two calls deep must print a backtrace naming every caller.
 ```
 kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs,
                       switch.S (context switch), usermode.S (iretq to ring 3, syscall entry), acpi.c (RSDP/XSDT/MADT), apic.c (LAPIC, I/O APIC)
-kernel/drivers/       serial (polled output, IRQ input), framebuffer, text console, irq.c
+kernel/drivers/       serial (polled output, IRQ input), framebuffer, text console (with a
+                      shadow buffer), fbdev.c (user framebuffer access), irq.c
                       (PIC/APIC selection), PIC, PIT + system tick, PS/2 keyboard
 kernel/tty/           tty.c: console input line discipline
 kernel/lib/           string functions, kprintf, ksyms.c (symbols, backtraces), ktest.c
@@ -216,6 +247,8 @@ kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
 initrd/               files packed into the initrd image (etc/motd, etc/shtest.sh)
 user/                 user space: linker.ld, lib/ (crt0, tern.h, ulib.c, malloc.c), bin/ (programs)
-tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot script
+tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot
+                      script, ppmstat.py (screenshot checks)
+docs/                 screenshots
 tests/                headless test runner and expected markers
 ```

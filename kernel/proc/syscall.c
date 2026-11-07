@@ -13,6 +13,9 @@
 #include "pmm.h"
 #include "heap.h"
 #include "tty.h"
+#include "fbdev.h"
+#include "acpi.h"
+#include "io.h"
 
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -317,6 +320,46 @@ static long sys_proclist(uint64_t ubuf, uint64_t max) {
     return n;
 }
 
+/* ---- framebuffer + power (Day 11 session) ---- */
+static long sys_fbinfo(uint64_t uinfo) {
+    if (!user_ok(uinfo, sizeof(struct tern_fbinfo), true)) return -EFAULT;
+    struct tern_fbinfo fi;
+    int rc = fbdev_info(&fi);
+    if (rc) return rc;
+    memcpy((void *)uinfo, &fi, sizeof fi);
+    return 0;
+}
+
+static long sys_fbacquire(uint64_t on) {
+    int pid = proc_current()->pid;
+    if (on == 1) return fbdev_acquire(pid);
+    if (on == 0) return fbdev_release_by(pid);
+    return -EINVAL;
+}
+
+static long sys_fbblit(uint64_t ub) {
+    if (!user_ok(ub, sizeof(struct tern_fbblit), false)) return -EFAULT;
+    struct tern_fbblit b;
+    memcpy(&b, (const void *)ub, sizeof b);
+    return fbdev_blit(proc_current()->pid, &b, proc_current()->pml4);
+}
+
+static long sys_poweroff(void) {
+    struct acpi_s5 s;
+    if (!acpi_s5_info(&s)) return -EIO;
+    kprintf("poweroff: ACPI S5 (PM1a_CNT %x, SLP_TYP %u)\n", s.pm1a_cnt, s.slp_typa);
+    uint64_t f = irq_save();
+    if (!(inw(s.pm1a_cnt) & 1) && s.smi_cmd && s.acpi_enable) {   /* SCI_EN off: enable ACPI */
+        outb(s.smi_cmd, s.acpi_enable);
+        for (int i = 0; i < 1000000 && !(inw(s.pm1a_cnt) & 1); i++) __asm__ volatile("pause");
+    }
+    outw(s.pm1a_cnt, (uint16_t)((s.slp_typa << 10) | (1u << 13)));
+    if (s.pm1b_cnt) outw(s.pm1b_cnt, (uint16_t)((s.slp_typb << 10) | (1u << 13)));
+    for (int i = 0; i < 10000000; i++) __asm__ volatile("pause");
+    irq_restore(f);
+    return -EIO;                         /* still running: the firmware ignored us */
+}
+
 static long syscall_do(struct regs *r) {
     uint64_t a0 = r->rdi, a1 = r->rsi, a2 = r->rdx;
     switch (r->rax) {
@@ -370,6 +413,10 @@ static long syscall_do(struct regs *r) {
         if ((int64_t)a0 < 0 || a0 > 0x7fffffff) return -ESRCH;
         return proc_getpgid((int)a0);
     case SYS_rename:    return sys_rename(a0, a1);
+    case SYS_fbinfo:    return sys_fbinfo(a0);
+    case SYS_fbacquire: return sys_fbacquire(a0);
+    case SYS_fbblit:    return sys_fbblit(a0);
+    case SYS_poweroff:  return sys_poweroff();
     default:            return -ENOSYS;
     }
 }

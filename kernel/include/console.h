@@ -22,6 +22,12 @@ void con_get_cursor(uint32_t *col, uint32_t *row);
 /* True if the pixels of cell (col,row) exactly show glyph ch in the current colours. */
 bool con_cell_matches(uint32_t col, uint32_t row, char ch);
 
+/* Day 11 session: while suspended, text goes only to the shadow buffer (a user program
+ * owns the framebuffer); con_resume() repaints the whole screen from it. */
+void con_suspend(void);
+void con_resume(void);
+bool con_suspended(void);
+
 /* Write to every active output (serial + framebuffer console). */
 void console_write(const char *s);
 

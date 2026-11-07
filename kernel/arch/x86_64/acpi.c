@@ -126,3 +126,50 @@ bool acpi_init(const struct boot_info *bi) {
     if (m) parse_madt(m);
     return true;
 }
+
+/* ---- S5 soft-off (Day 11 session) ----
+ * PM1a/PM1b control blocks come from the FADT; SLP_TYP for S5 from the \_S5_ package in
+ * the DSDT. Instead of an AML interpreter we scan for the byte pattern
+ * "_S5_" PackageOp PkgLength NumElements <int> <int>, which is how firmware (and QEMU)
+ * encode it; integers are ZeroOp/OneOp/BytePrefix. */
+static int aml_small_int(const uint8_t *p, const uint8_t *end, uint8_t *out) {
+    if (p >= end) return 0;
+    if (*p == 0x00 || *p == 0x01) { *out = *p; return 1; }
+    if (*p == 0x0A && p + 1 < end) { *out = p[1]; return 2; }
+    return 0;
+}
+
+bool acpi_s5_info(struct acpi_s5 *out) {
+    const struct acpi_sdt *fadt = acpi_find("FACP", 0);
+    if (!fadt || fadt->length < 72) return false;
+    const uint8_t *f = (const uint8_t *)fadt;
+    uint32_t dsdt32, pm1a, pm1b, smi_cmd;
+    memcpy(&dsdt32, f + 40, 4);
+    memcpy(&smi_cmd, f + 48, 4);
+    memcpy(&pm1a, f + 64, 4);
+    memcpy(&pm1b, f + 68, 4);
+    uint64_t dsdt_pa = dsdt32;
+    if (fadt->length >= 148) {
+        uint64_t x; memcpy(&x, f + 140, 8);
+        if (x) dsdt_pa = x;
+    }
+    out->pm1a_cnt = (uint16_t)pm1a;
+    out->pm1b_cnt = (uint16_t)pm1b;
+    out->smi_cmd = (uint16_t)smi_cmd;
+    out->acpi_enable = f[52];
+    if (!out->pm1a_cnt) return false;
+    const struct acpi_sdt *dsdt = table_at(dsdt_pa);
+    if (!dsdt || memcmp(dsdt->sig, "DSDT", 4)) return false;
+    const uint8_t *p = (const uint8_t *)dsdt + sizeof *dsdt, *end = (const uint8_t *)dsdt + dsdt->length;
+    for (; p + 8 < end; p++) {
+        if (memcmp(p, "_S5_", 4) || p[4] != 0x12) continue;
+        const uint8_t *q = p + 5;
+        q += 1 + (*q >> 6);            /* PkgLength: lead byte + (bits 7:6) extra bytes */
+        q++;                           /* NumElements */
+        int n = aml_small_int(q, end, &out->slp_typa);
+        if (!n) return false;
+        if (!aml_small_int(q + n, end, &out->slp_typb)) return false;
+        return true;
+    }
+    return false;
+}

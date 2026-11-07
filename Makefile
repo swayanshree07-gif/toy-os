@@ -22,9 +22,9 @@ KERNEL  := $(BUILD)/ternos.elf
 QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
                -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all run run-headless test clean
+.PHONY: all iso run run-headless run-iso test clean
 .SECONDARY:
-all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
+all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI $(BUILD)/ternos.iso
 
 $(BUILD)/%.c.o: %.c Makefile
 	@mkdir -p $(dir $@)
@@ -121,6 +121,22 @@ $(BUILD)/esp-%/EFI/BOOT/BOOTX64.EFI: $(KERNEL) $(INITRD) $(BUILD)/grub-%.cfg
 	    "boot/grub/grub.cfg=$(BUILD)/grub-$*.cfg" "boot/ternos.elf=$(KERNEL)" \
 	    "boot/initrd.img=$(INITRD)"
 
+# Bootable ISO (Day 11 session; mtools is installed now, so grub-mkrescue works): GRUB EFI
+# El Torito image + plain ISO 9660 tree with the kernel and initrd. Kernel cmdline "run"
+# (boots into the shell). Boot it with `make run-iso` or any UEFI machine/VM.
+ISO := $(BUILD)/ternos.iso
+iso: $(ISO)
+$(ISO): $(KERNEL) $(INITRD) boot/grub.cfg Makefile
+	rm -rf $(BUILD)/iso && mkdir -p $(BUILD)/iso/boot/grub
+	sed -e 's/@CMDLINE@/$(CMDLINE_run)/' -e '/set root=(memdisk)/d' boot/grub.cfg \
+	    > $(BUILD)/iso/boot/grub/grub.cfg
+	cp $(KERNEL) $(INITRD) $(BUILD)/iso/boot/
+	grub-mkrescue -o $@ $(BUILD)/iso 2> $(BUILD)/grub-mkrescue.log || \
+	    { cat $(BUILD)/grub-mkrescue.log; exit 1; }
+
+run-iso: $(ISO)
+	$(QEMU) $(QEMU_COMMON) -cdrom $(ISO) -serial stdio
+
 # QEMU's vvfat write-back can corrupt BOOTX64.EFI when OVMF writes NvVars to the ESP,
 # so QEMU always gets a fresh throwaway copy (build/boot-esp) of the pristine build/esp.
 BOOT_ESP := rm -rf $(BUILD)/boot-esp && cp -r $(BUILD)/esp $(BUILD)/boot-esp
@@ -134,7 +150,7 @@ run-headless: all
 	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp \
 	    -display none -serial stdio
 
-test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI)
+test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO)
 	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)
 
 clean:
