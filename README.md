@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 13 session; plan Days 1–27 done, re-plan sessions 12–13 done, 14 started)
+## Status (Day 14 session; plan Days 1–27 done, re-plan sessions 12–14 done)
 
 ![demo](docs/demo.png)
 
@@ -41,7 +41,11 @@ Working:
 - **ACPI** (minimal): RSDP from the Multiboot2 tag, XSDT/RSDT walk with checksums, MADT
   parsing (CPUs, I/O APICs, ISA interrupt source overrides, LAPIC address)
 - **PCI enumeration** (config mechanism #1 on ports 0xCF8/0xCFC, bridges followed, devices
-  logged at boot; on q35 it finds the AHCI controller at 00:1f.2 for the coming disk driver)
+  logged at boot; on q35 it finds the AHCI controller at 00:1f.2)
+- **AHCI SATA driver** (`kernel/drivers/ahci.c`, polled, slot 0, one bounce frame per
+  port): ABAR mapped uncached, bus mastering on, ports stopped/rebased/started, IDENTIFY
+  (model, LBA48 size), `ahci_read(disk, lba, 1..8, buf)` with READ DMA EXT. Read-only so far;
+  no filesystem on top yet
 - **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
   I/O APIC (honouring MADT overrides/polarity), and the **LAPIC timer** (calibrated against
   PIT channel 2) drives the 100 Hz tick. Kernel cmdline `noapic` falls back to 8259 + PIT
@@ -197,6 +201,9 @@ line. In test mode the kernel runs its self-checks, prints `[TEST] ...` markers 
 exits QEMU through the `isa-debug-exit` device (status 33 = pass, 35 = panic/fail). The script
 `tests/run_tests.sh` checks the exit status and every regex in `tests/expected.txt` against
 the serial log (`build/serial-test.log`). Each new feature adds a marker there.
+Every ESP test boot also gets `build/testdisk.img` (64 sectors from `tools/mktestdisk.py`,
+each holding its LBA and a byte pattern) as a SATA disk on AHCI port 2 (`snapshot=on`);
+the kernel reads and verifies sectors from it and checks the boot disk's MBR signature.
 
 There are two positive test images: `test` (APIC mode) and `test-pic` (cmdline
 `test kbd noapic`, legacy 8259 + PIT); each must also match `tests/pass-<image>.txt`.

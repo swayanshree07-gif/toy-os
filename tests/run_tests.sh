@@ -77,7 +77,9 @@ boot() {
         # every boot gets a throwaway copy of the pristine build output.
         local esp="$BUILD/boot-esp-$img"
         rm -rf "$esp" && cp -r "$BUILD/esp-$img" "$esp"
-        drive=(-drive format=raw,file=fat:rw:"$esp")
+        drive=(-drive format=raw,file=fat:rw:"$esp"
+               -drive if=none,id=td,format=raw,snapshot=on,file="$BUILD/testdisk.img"
+               -device ide-hd,bus=ide.2,drive=td)
     fi
     local status
     if [ "$keys" != 0 ]; then

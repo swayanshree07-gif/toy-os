@@ -150,7 +150,12 @@ run-headless: all
 	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp \
 	    -display none -serial stdio
 
-test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO)
+# Raw 64-sector disk with a known pattern, attached as a second SATA disk to test boots.
+$(BUILD)/testdisk.img: tools/mktestdisk.py
+	@mkdir -p $(BUILD)
+	python3 tools/mktestdisk.py $@
+
+test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO) $(BUILD)/testdisk.img
 	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)
 
 clean:

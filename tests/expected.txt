@@ -157,3 +157,5 @@ tern:/etc\$ yes \| /bin/spin 30000
 tern:/etc\$ exit 3
 \[TEST\] shell ok: interactive session, exit 3
 \[TEST\] pci: [0-9]+ devices, host bridge 8086:29c0, ahci 8086:2922 at 00:1f.2
+\[TEST\] ahci: disk [0-9] on port 2 "QEMU HARDDISK" 64 sectors, lba 0/37/63 \+ 10..17 verified, bad requests rejected
+\[TEST\] ahci: boot disk MBR 55aa ok

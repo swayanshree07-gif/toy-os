@@ -21,6 +21,8 @@
 #include "vmm.h"
 #include "selftest.h"
 #include "pci.h"
+#include "ahci.h"
+#include "syscall_nr.h"
 #include "heap.h"
 #include "sched.h"
 #include "ksyms.h"
@@ -241,6 +243,50 @@ static void test_irq_mode(void) {
 }
 
 /* ---- Day 13 session: PCI enumeration (q35: host bridge 8086:29c0, AHCI at 00:1f.2) ---- */
+
+/* AHCI: the test boots attach build/testdisk.img (64 sectors, tools/mktestdisk.py) as a
+ * second SATA disk; every sector carries its LBA and a known byte pattern. */
+static bool check_sector(const uint8_t *s, unsigned lba) {
+    char head[32];
+    ksnprintf(head, sizeof head, "TERNDISK LBA %08u\n", lba);
+    size_t hl = strlen(head);
+    if (memcmp(s, head, hl)) return false;
+    for (unsigned i = hl; i < 512; i++) if (s[i] != (uint8_t)(lba * 7 + i)) return false;
+    return true;
+}
+
+static void test_ahci(void) {
+    int td = -1;
+    for (int i = 0; i < ahci_disk_count(); i++) if (ahci_disk_get(i)->sectors == 64) td = i;
+    if (td < 0) panic("ahci: test disk (64 sectors) not found, %d disks", ahci_disk_count());
+    const struct ahci_disk *d = ahci_disk_get(td);
+    uint8_t *buf = kmalloc(8 * 512);
+    if (!buf) panic("ahci: kmalloc");
+    static const unsigned single[] = {0, 37, 63};
+    for (unsigned k = 0; k < 3; k++) {
+        memset(buf, 0xAA, 512);
+        int r = ahci_read(td, single[k], 1, buf);
+        if (r || !check_sector(buf, single[k])) panic("ahci: lba %u read %d / bad data", single[k], r);
+    }
+    memset(buf, 0, 8 * 512);
+    if (ahci_read(td, 10, 8, buf)) panic("ahci: 8-sector read failed");
+    for (unsigned k = 0; k < 8; k++)
+        if (!check_sector(buf + k * 512, 10 + k)) panic("ahci: 8-sector read, sector %u bad", 10 + k);
+    if (ahci_read(td, 60, 8, buf) != -EINVAL || ahci_read(td, 0, 0, buf) != -EINVAL ||
+        ahci_read(td, 0, 9, buf) != -EINVAL || ahci_read(99, 0, 1, buf) != -EINVAL)
+        panic("ahci: bad requests not rejected");
+    /* still works after the rejected ones */
+    if (ahci_read(td, 63, 1, buf) || !check_sector(buf, 63)) panic("ahci: read after rejects");
+    /* the other disk is the vvfat boot ESP: its sector 0 is an MBR */
+    int boot = td == 0 ? 1 : 0;
+    if (ahci_read(boot, 0, 1, buf) || buf[510] != 0x55 || buf[511] != 0xAA)
+        panic("ahci: boot disk MBR signature %x %x", buf[510], buf[511]);
+    kfree(buf);
+    kprintf("[TEST] ahci: boot disk MBR 55aa ok\n");
+    kprintf("[TEST] ahci: disk %d on port %d \"%s\" 64 sectors, lba 0/37/63 + 10..17 verified, bad requests rejected\n",
+            td, d->port, d->model);
+}
+
 static void test_pci(void) {
     int n = pci_count();
     const struct pci_dev *hb = pci_find_class(0x06, 0x00, 0xFF);
@@ -388,6 +434,8 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     if (g_test_mode) { test_irq_mode(); test_timer(); }
     pci_scan();
     if (g_test_mode) test_pci();
+    ahci_init();
+    if (g_test_mode) test_ahci();
 
     sched_init();
     kprintf("scheduler: main thread adopted, idle thread created\n");
