@@ -79,7 +79,9 @@ boot() {
         rm -rf "$esp" && cp -r "$BUILD/esp-$img" "$esp"
         drive=(-drive format=raw,file=fat:rw:"$esp"
                -drive if=none,id=td,format=raw,snapshot=on,file="$BUILD/testdisk.img"
-               -device ide-hd,bus=ide.2,drive=td)
+               -device ide-hd,bus=ide.2,drive=td
+               -drive if=none,id=fd,format=raw,snapshot=on,file="$BUILD/fatdisk.img"
+               -device ide-hd,bus=ide.3,drive=fd)
     fi
     local status
     if [ "$keys" != 0 ]; then

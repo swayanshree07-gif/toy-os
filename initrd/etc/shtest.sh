@@ -95,4 +95,12 @@ help | nosuchprog
 pwd | wc &
 echo b | exit 3 | wc
 echo "builtin pipes done"
+ls /disk
+cat /disk/docs/deep/nest.txt
+cat /disk/docs/readme.txt | grep -c line
+echo nope > /disk/hello.txt
+cat /disk/hello.txt
+cp /disk/hello.txt /hcopy
+cat /hcopy
+rm /hcopy
 exit 5

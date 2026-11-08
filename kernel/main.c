@@ -255,6 +255,61 @@ static bool check_sector(const uint8_t *s, unsigned lba) {
     return true;
 }
 
+/* FAT16: the test boots attach build/fatdisk.img (tools/mkfatdisk.py), mounted at /disk. */
+static uint8_t big_byte(uint32_t i) { return (uint8_t)(i * 31 + i / 256); }
+static void fat_expect(const char *path, const char *want) {
+    struct file *f;
+    char buf[128];
+    int rc = vfs_open(NULL, path, O_RDONLY, &f);
+    if (rc) panic("fat: open %s: %d", path, rc);
+    long n = file_read(f, buf, sizeof buf - 1);
+    file_close(f);
+    size_t wl = strlen(want);
+    if (n != (long)wl || memcmp(buf, want, wl)) panic("fat: %s read %ld bytes, wrong content", path, n);
+}
+static void test_fat(void) {
+    int lerr = 0;
+    struct vnode *v = vfs_lookup(NULL, "/disk/big.bin", &lerr);
+    if (!v) panic("fat: /disk/big.bin missing (is fatdisk.img attached?)");
+    struct tern_stat st;
+    vfs_stat(v, &st);
+    if (st.type != TERN_FT_FILE || st.size != 100000) panic("fat: big.bin type %u size %lu", st.type, st.size);
+    struct file *f = vfs_open_node(v, O_RDONLY);
+    vfs_put(v);
+    if (!f) panic("fat: open big.bin");
+    /* odd chunk sizes so reads straddle sector and cluster boundaries */
+    static uint8_t buf[1000];
+    uint32_t pos = 0, chunks[] = { 1, 511, 2, 700, 513, 1000, 37 };
+    for (int k = 0; pos < 100000; k++) {
+        long n = file_read(f, buf, chunks[k % 7]);
+        if (n <= 0) panic("fat: big.bin read at %u returned %ld", pos, n);
+        for (long i = 0; i < n; i++)
+            if (buf[i] != big_byte(pos + (uint32_t)i)) panic("fat: big.bin byte %u wrong", pos + (uint32_t)i);
+        pos += (uint32_t)n;
+    }
+    if (pos != 100000 || file_read(f, buf, 10) != 0) panic("fat: big.bin length/EOF wrong (%u)", pos);
+    if (file_seek(f, 77777, SEEK_SET) != 77777 || file_read(f, buf, 300) != 300) panic("fat: seek+read");
+    for (int i = 0; i < 300; i++) if (buf[i] != big_byte(77777u + (uint32_t)i)) panic("fat: byte after seek");
+    if (file_write(f, "x", 1) != -EBADF) panic("fat: write on read-only fd");
+    file_close(f);
+    fat_expect("/disk/hello.txt", "Hello from a FAT16 disk!\n");
+    fat_expect("/disk/docs/deep/nest.txt", "nested ok\n");
+    fat_expect("/disk/empty.txt", "");
+    fat_expect("/disk/docs/readme.txt", "TernOS FAT16 test disk.\nThis file lives in /disk/docs.\nThird line.\n");
+    if (vfs_open(NULL, "/disk/hello.txt", O_RDWR, &f) != -EROFS ||
+        vfs_open(NULL, "/disk/hello.txt", O_WRONLY | O_TRUNC, &f) != -EROFS)
+        panic("fat: write open not rejected with EROFS");
+    fat_expect("/disk/hello.txt", "Hello from a FAT16 disk!\n");
+    int err = 0;
+    if (vfs_lookup(NULL, "/disk/eleted.txt", &err) || vfs_lookup(NULL, "/disk/terndisk", &err))
+        panic("fat: deleted entry or volume label visible");
+    struct fat_stats fs;
+    fat_get_stats(&fs);
+    kprintf("[TEST] fat: /disk big.bin 100000 bytes (scattered clusters) verified in odd chunks + seek, "
+            "nested dirs, empty file, EROFS on write (%lu sector reads, %lu cache hits)\n",
+            fs.sector_reads, fs.cache_hits);
+}
+
 static void test_ahci(void) {
     int td = -1;
     for (int i = 0; i < ahci_disk_count(); i++) if (ahci_disk_get(i)->sectors == 64) td = i;
@@ -453,6 +508,16 @@ void kmain(uint32_t magic, uint32_t info_addr) {
             if (!rd || n != (int)rd->count) panic("vfs: copied %d of %u initrd files", n, rd ? rd->count : 0);
             test_vfs();
         }
+    }
+    {
+        int d = fat_find_disk();
+        if (d >= 0) {
+            int n = fat_mount(d, "/disk");
+            if (n < 0) kprintf("fat: mounting disk %d failed (%d)\n", d, n);
+        } else {
+            kprintf("fat: no FAT16 disk found, /disk not mounted\n");
+        }
+        if (g_test_mode) test_fat();
     }
     syscall_init();
     proc_init();

@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 14 session; plan Days 1–27 done, re-plan sessions 12–14 done)
+## Status (Day 15 session; plan Days 1–27 done, re-plan sessions 12–15 done)
 
 ![demo](docs/demo.png)
 
@@ -44,8 +44,14 @@ Working:
   logged at boot; on q35 it finds the AHCI controller at 00:1f.2)
 - **AHCI SATA driver** (`kernel/drivers/ahci.c`, polled, slot 0, one bounce frame per
   port): ABAR mapped uncached, bus mastering on, ports stopped/rebased/started, IDENTIFY
-  (model, LBA48 size), `ahci_read(disk, lba, 1..8, buf)` with READ DMA EXT. Read-only so far;
-  no filesystem on top yet
+  (model, LBA48 size), `ahci_read(disk, lba, 1..8, buf)` with READ DMA EXT. Read-only
+- **Read-only FAT16 at `/disk`** (`kernel/fs/fat.c`): the first AHCI disk with a FAT16
+  boot sector (superfloppy, no partition table) is mounted at boot. The directory tree is
+  built in the VFS, file contents are read from the disk on demand through the cluster
+  chain (FAT kept in RAM, one-sector cache). 8.3 names shown in lower case, no long names.
+  Opening a disk file for writing gives `-EROFS` ("read-only file system" in tsh);
+  rm/mv only change the in-memory tree. `make run` attaches `build/fatdisk.img`, written
+  by our own `tools/mkfatdisk.py` (try `ls /disk`, `cat /disk/docs/readme.txt`)
 - **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
   I/O APIC (honouring MADT overrides/polarity), and the **LAPIC timer** (calibrated against
   PIT channel 2) drives the 100 Hz tick. Kernel cmdline `noapic` falls back to 8259 + PIT
@@ -144,7 +150,7 @@ Working:
   keystrokes typed through the QEMU monitor
 
 Not yet: job control beyond `&`/`fg`/`wait` (no stopping /
-`bg`), a block device driver (AHCI next), on-disk file systems and on-disk file systems, BIOS (non-UEFI) boot, SMP.
+`bg`), writing to disks / a writable on-disk file system, FAT long names, partitions, BIOS (non-UEFI) boot, SMP.
 
 ### Adding a user program
 
@@ -204,6 +210,10 @@ the serial log (`build/serial-test.log`). Each new feature adds a marker there.
 Every ESP test boot also gets `build/testdisk.img` (64 sectors from `tools/mktestdisk.py`,
 each holding its LBA and a byte pattern) as a SATA disk on AHCI port 2 (`snapshot=on`);
 the kernel reads and verifies sectors from it and checks the boot disk's MBR signature.
+They also get `build/fatdisk.img` (FAT16, `tools/mkfatdisk.py`) on port 3, which is mounted
+at `/disk`; the kernel verifies a 100000-byte file with scattered clusters in odd-sized
+chunks and after a seek, nested directories, an empty file and `-EROFS`, and
+`/etc/shtest.sh` uses `ls`/`cat`/`grep`/`cp` on it from user space.
 
 There are two positive test images: `test` (APIC mode) and `test-pic` (cmdline
 `test kbd noapic`, legacy 8259 + PIT); each must also match `tests/pass-<image>.txt`.

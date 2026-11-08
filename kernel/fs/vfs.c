@@ -25,7 +25,7 @@ static struct vnode *node_new(enum vnode_type type, const char *name, size_t nle
 
 static void node_free(struct vnode *v) {
     kassert(v->refs == 0 && !v->linked && !v->children);
-    if (v->type == VN_DEV && v->ops && v->ops->release) v->ops->release(v);
+    if (v->ops && v->ops->release) v->ops->release(v);
     file_bytes -= v->cap;
     kfree(v->data);
     kfree(v);
@@ -290,6 +290,7 @@ int vfs_open(struct vnode *cwd, const char *path, int flags, struct file **out) 
     err = 0;
     if (v->type == VN_DIR && (flags & O_ACCMODE) != O_RDONLY) err = -EISDIR;
     else if (v->type != VN_DIR && (flags & O_DIRECTORY)) err = -ENOTDIR;
+    if (!err && v->type == VN_FILE && v->ops && (flags & O_ACCMODE) != O_RDONLY) err = -EROFS;
     if (!err && v->type == VN_FILE && (flags & O_TRUNC) && (flags & O_ACCMODE) != O_RDONLY)
         v->size = 0;
     struct file *f = err ? NULL : file_new(v, flags);
@@ -328,7 +329,13 @@ long file_read(struct file *f, void *buf, size_t len) {
     }
     mutex_lock(&vfs_lock);
     long n = 0;
-    if (f->off < v->size) {
+    if (v->ops && v->ops->read) {               /* backed by a disk file system */
+        if (f->off < v->size) {
+            uint64_t avail = v->size - f->off;
+            n = v->ops->read(v, buf, len < avail ? len : (size_t)avail, f->off);
+            if (n > 0) f->off += (uint64_t)n;
+        }
+    } else if (f->off < v->size) {
         uint64_t avail = v->size - f->off;
         n = (long)(len < avail ? len : avail);
         memcpy(buf, v->data + f->off, (size_t)n);
@@ -364,6 +371,7 @@ long file_write(struct file *f, const void *buf, size_t len) {
         return v->ops->write(v, buf, len, f->off);
     }
     if (v->type != VN_FILE) return -EISDIR;
+    if (v->ops) return -EROFS;
     mutex_lock(&vfs_lock);
     if (f->flags & O_APPEND) f->off = v->size;
     long rc;

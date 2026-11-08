@@ -141,13 +141,13 @@ run-iso: $(ISO)
 # so QEMU always gets a fresh throwaway copy (build/boot-esp) of the pristine build/esp.
 BOOT_ESP := rm -rf $(BUILD)/boot-esp && cp -r $(BUILD)/esp $(BUILD)/boot-esp
 
-run: all
+run: all $(BUILD)/fatdisk.img
 	$(BOOT_ESP)
-	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp -serial stdio
+	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp $(FATDISK) -serial stdio
 
-run-headless: all
+run-headless: all $(BUILD)/fatdisk.img
 	$(BOOT_ESP)
-	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp \
+	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp $(FATDISK) \
 	    -display none -serial stdio
 
 # Raw 64-sector disk with a known pattern, attached as a second SATA disk to test boots.
@@ -155,7 +155,13 @@ $(BUILD)/testdisk.img: tools/mktestdisk.py
 	@mkdir -p $(BUILD)
 	python3 tools/mktestdisk.py $@
 
-test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO) $(BUILD)/testdisk.img
+# FAT16 disk (own writer) mounted read-only at /disk.
+$(BUILD)/fatdisk.img: tools/mkfatdisk.py
+	@mkdir -p $(BUILD)
+	python3 tools/mkfatdisk.py $@
+FATDISK := -drive if=none,id=fd,format=raw,snapshot=on,file=$(BUILD)/fatdisk.img -device ide-hd,bus=ide.3,drive=fd
+
+test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO) $(BUILD)/testdisk.img $(BUILD)/fatdisk.img
 	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)
 
 clean:

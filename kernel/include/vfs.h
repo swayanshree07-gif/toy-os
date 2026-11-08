@@ -23,7 +23,10 @@ enum vnode_type { VN_FILE = TERN_FT_FILE, VN_DIR = TERN_FT_DIR, VN_DEV = TERN_FT
 
 struct vnode;
 struct file;
-struct vnode_ops {                   /* device nodes only; files/dirs use ramfs */
+/* Device nodes use read/write. A VN_FILE with ops is backed by a disk file system
+ * (fat.c): read is called with the VFS lock held and len clipped to v->size; it is
+ * read-only (opening for writing gives -EROFS). Unlink/rename only change the tree. */
+struct vnode_ops {
     long (*read)(struct vnode *v, void *buf, size_t len, uint64_t off);
     long (*write)(struct vnode *v, const void *buf, size_t len, uint64_t off);
     /* optional: an open file description on v is closed for the last time (called
@@ -113,6 +116,14 @@ void vfs_get_stats(struct vfs_stats *s);
 int pipe_create(struct file **rd, struct file **wr);
 struct pipe_stats { uint64_t live, created, bytes, blocked_reads, blocked_writes, epipes; };
 void pipe_get_stats(struct pipe_stats *s);
+
+/* Read-only FAT16 from an AHCI disk, mounted at `path` (fat.c). The directory tree is
+ * built in the VFS at mount time; file contents are read from the disk on demand.
+ * Returns files mounted or a negative errno (-ENODEV: no FAT16 file system on it). */
+int fat_mount(int disk, const char *path);
+int fat_find_disk(void);       /* first AHCI disk with a FAT16 boot sector, or -ENODEV */
+struct fat_stats { uint64_t sector_reads, cache_hits; };
+void fat_get_stats(struct fat_stats *s);
 
 void test_vfs(void);
 

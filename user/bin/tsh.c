@@ -114,6 +114,7 @@ static const char *errstr(int e) {
     case EEXIST: return "already exists";
     case EAGAIN: return "too many processes";
     case EMFILE: return "too many open files";
+    case EROFS: return "read-only file system";
     default: return "error";
     }
 }
