@@ -109,6 +109,11 @@ mv /disk/notes.txt /disk/n2.txt
 rm /disk/shdir/copy.txt
 rm /disk/shdir
 rm /disk/notes.txt
+ted /disk/ted.txt < /etc/ted.cmds
+cat /disk/ted.txt
+ted /disk/ted.txt < /etc/ted.cmds2
+cat /disk/ted.txt | wc
+rm /disk/ted.txt
 ls /disk
 cat /disk/hello.txt
 cp /disk/hello.txt /hcopy

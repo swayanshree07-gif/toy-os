@@ -168,3 +168,14 @@ tern:/etc\$ exit 3
 ^mv: .*cross-device
 ^Hello from a FAT16 disk!
 ^  big.bin +100000
+# Day 18: ted line editor driven by /etc/ted.cmds and /etc/ted.cmds2 (shtest.sh)
+^ted: /disk/ted.txt: new file
+^2	second line
+^3.?$
+^\? invalid address
+^\? unknown command
+^ted: /disk/ted.txt: 3 lines, 27 bytes
+^3 4 27.?$
+^title.?$
+^line one.?$
+^27.?$

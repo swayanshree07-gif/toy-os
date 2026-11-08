@@ -30,7 +30,7 @@ KEY_STAGES=(
 
 # Release ISO session. A key "!cmd:arg" sends the monitor command "cmd arg" instead.
 ISO_STAGES=(
-    "tsh: TernOS shell|c a t spc slash d i s k slash w e l c o m e dot t x t ret e c h o spc w r i t t e n spc b y spc t e r n o s spc shift-dot spc slash d i s k slash n o t e s slash f r o m o s dot t x t ret l s spc slash d i s k slash n o t e s ret d e m o spc 9 0 ret"
+    "tsh: TernOS shell|c a t spc slash d i s k slash w e l c o m e dot t x t ret e c h o spc w r i t t e n spc b y spc t e r n o s spc shift-dot spc slash d i s k slash n o t e s slash f r o m o s dot t x t ret t e d spc slash d i s k slash n o t e s slash t e d dot t x t ret a ret h e l l o spc f r o m spc t e d ret b y e ret dot ret 1 c ret h i spc f r o m spc t e d ret dot ret w ret q ret l s spc slash d i s k slash n o t e s ret d e m o spc 9 0 ret"
     "demo: running|!screendump:$BUILD/screen-demo.ppm"
     "demo: 90 frames|!screendump:$BUILD/screen-console.ppm"
     "demo: 90 frames|p o w e r o f f ret"
@@ -164,6 +164,8 @@ boot iso 0 "$here/iso.txt" 0 ISO_STAGES "poweroff:" iso
 ud="$BUILD/userdisk-rw.img"
 mcheck "fatimg get /notes/fromos.txt (written by the OS)" bash -c \
     "[ \"\$($FATIMG get '$ud' /notes/fromos.txt)\" = 'written by ternos' ]"
+mcheck "fatimg get /notes/ted.txt (typed into /bin/ted)" bash -c \
+    "[ \"\$($FATIMG get '$ud' /notes/ted.txt)\" = \"\$(printf 'hi from ted\\nbye')\" ]"
 mcheck "fatimg fsck of the user disk after the OS wrote to it" $FATIMG fsck "$ud"
 # The demo screenshot must be a busy picture (gradient sky, sea, terns), the one after
 # it exits the text console again (mostly its background colour 101828).
