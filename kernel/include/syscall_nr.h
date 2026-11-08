@@ -28,8 +28,9 @@
                                arguments. fds: NULL, or int[3] giving the child's fds 0-2:
                                a caller fd to share, or -1 = fresh /dev/console. NULL =
                                all three on the console. The child gets the caller's cwd */
-#define SYS_wait      17    /* wait(pid or -1, int *status) -> pid of the reaped child;
-                               -ECHILD if there is no such child. status may be NULL */
+#define SYS_wait      17    /* wait(pid or -1, int *status, flags) -> pid of the reaped
+                               child; -ECHILD if there is no such child. status may be
+                               NULL. flags TERN_WNOHANG: return 0 instead of blocking */
 #define SYS_getppid   18    /* getppid() -> parent pid, 0 if none (orphan / kernel) */
 #define SYS_chdir     19    /* chdir(path) -> 0 */
 #define SYS_getcwd    20    /* getcwd(buf, size) -> length (without NUL) */
@@ -59,7 +60,15 @@
 #define SYS_fbblit    31    /* fbblit(const struct tern_fbblit *) -> 0; owner only (-EPERM).
                                Pixels are 0x00RRGGBB; the kernel converts if needed. */
 #define SYS_poweroff  32    /* poweroff() -> ACPI S5 (QEMU exits); -EIO if that failed */
-#define SYS_COUNT     33
+/* Day 12 session */
+#define SYS_exec      33    /* exec(path, argv) replaces the program of the calling process
+                               (same pid, parent, pgid, fds, cwd); argv as for spawn. Does
+                               not return on success; on failure nothing has changed */
+#define SYS_dup       34    /* dup(fd) -> lowest free fd, sharing fd's open file (offset) */
+#define SYS_dup2      35    /* dup2(fd, newfd) -> newfd; newfd is closed first if open;
+                               dup2(fd, fd) just checks fd */
+#define SYS_COUNT     36
+#define TERN_WNOHANG  1
 #define PROC_MAX_LIVE 64    /* spawn fails with -EAGAIN beyond this many processes */
 #define TERN_EXIT_INTR   130   /* killed by Ctrl-C */
 #define TERN_EXIT_KILLED 137   /* killed by kill() */

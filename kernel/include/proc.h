@@ -52,6 +52,7 @@ struct process {
     uint64_t fault_cr2;
     uint64_t ticks_run, switches;
     uint64_t user_irqs;            /* interrupts that arrived while in ring 3 */
+    unsigned execs;                /* successful exec() calls (Day 12 session) */
 };
 
 /* Create a process running a flat position-independent code blob (copied to
@@ -95,7 +96,11 @@ struct tern_procinfo;
 unsigned proc_list(struct tern_procinfo *out, unsigned max);
 /* Wait for a child (pid, or -1 = any) of the calling process to exit, free it and
  * store its exit code. Returns the child's pid, or -ECHILD. */
-int proc_wait_child(int pid, int *code);
+int proc_wait_child(int pid, int *code, bool nohang);
+/* Replace the calling process's program (SYS_exec): on success the syscall frame r is
+ * rewritten to start the new image and 0 is returned; on failure nothing has changed
+ * and a negative errno is returned. */
+int proc_exec(const char *path, const char *const *argv, struct regs *r);
 /* Processes allocated and not yet freed (for leak checks). */
 unsigned proc_live_count(void);
 
@@ -109,6 +114,7 @@ void syscall_init(void);           /* EFER.SCE, STAR, LSTAR, SFMASK */
 void test_user(void);
 void test_elf(void);
 void test_wait(void);
+void test_exec(void);
 void test_kill(void);
 void test_fpu(void);
 void test_pipes(void);

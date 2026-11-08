@@ -86,8 +86,9 @@ int main(int argc, char **argv) {
         case SYS_sleep_ms: a = 0; break;                   /* (a tick each would be slow) */
         case SYS_kill: if (a != (uint64_t)self) a = 0x7ffffff0; else continue; break;
         case SYS_setfg: continue;                          /* would steal Ctrl-C */
-        case SYS_wait: a = (uint64_t)-1; b = to_out(b); break;   /* no children: -ECHILD */
-        case SYS_spawn:                                    /* only paths that can't exist */
+        case SYS_wait:                                     /* no children: -ECHILD */
+            a = (uint64_t)-1; b = to_out(b); if (rnd() % 2) c &= TERN_WNOHANG; break;
+        case SYS_spawn: case SYS_exec:                                    /* only paths that can't exist */
             if (a >= (uint64_t)page_buf && a < (uint64_t)page_buf + sizeof page_buf) continue;
             break;
         case SYS_brk: {                    /* small moves around the current break */
@@ -100,6 +101,7 @@ int main(int argc, char **argv) {
             if (a < 3 && nr == SYS_close) continue;        /* keep /dev/null on 0-2 */
             if (nr == SYS_read || nr == SYS_readdir || nr == SYS_fstat) b = to_out(b);
             break;
+        case SYS_dup2: if (b < 3) continue; break;         /* keep /dev/null on 0-2 */
         case SYS_chdir: continue;                          /* stay in /fuzz */
         case SYS_poweroff: continue;                       /* would end the test run */
         case SYS_fbinfo: a = to_out(a); break;
@@ -118,7 +120,7 @@ int main(int argc, char **argv) {
             ok++;
         }
         /* close whatever the fuzzer opened, so EMFILE doesn't swallow everything */
-        if (nr == SYS_open && r >= 3) close((int)r);
+        if ((nr == SYS_open || nr == SYS_dup || nr == SYS_dup2) && r >= 3) close((int)r);
         if (nr == SYS_pipe && r == 0) for (int i = 3; i < 16; i++) close(i);
     }
     for (int i = 3; i < 16; i++) close(i);

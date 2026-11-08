@@ -42,6 +42,13 @@ static void fpu_init(void) {
 static inline void fpu_save(uint8_t *area) { __asm__ volatile("fxsave (%0)" : : "r"(area) : "memory"); }
 static inline void fpu_restore(const uint8_t *area) { __asm__ volatile("fxrstor (%0)" : : "r"(area) : "memory"); }
 
+/* exec: the current (user) thread's live FPU/SSE registers go back to the initial state. */
+void sched_fpu_reset_current(void) {
+    uint64_t f = irq_save();
+    fpu_restore(fpu_initial);
+    irq_restore(f);
+}
+
 /* ---- kernel stacks: [guard page][KSTACK_PAGES pages] in the KMAP area ----
  * Virtual space is handed out by a bump pointer and never reused (64 GiB of KMAP
  * space is plenty); the frames are returned to the PMM on free. */

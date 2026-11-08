@@ -57,6 +57,32 @@ static void put(struct out *o, char c) {
     o->len++;
 }
 
+/* %f: digits of |v| with prec (0..9) decimals into tmp, rounded half up; *neg = sign.
+ * Values >= 1e19 are printed approximately (leading digits, then zeros). */
+static int fmt_double(char *tmp, size_t max, double v, int prec, bool *neg) {
+    if (v != v) { memcpy(tmp, "nan", 3); *neg = false; return 3; }
+    *neg = __builtin_signbit(v);
+    if (*neg) v = -v;
+    if (v == __builtin_inf()) { memcpy(tmp, "inf", 3); return 3; }
+    if (prec > 9) prec = 9;
+    unsigned long long p10 = 1;
+    for (int i = 0; i < prec; i++) p10 *= 10;
+    int zeros = 0;
+    while (v >= 1e19) { v /= 10; zeros++; }
+    unsigned long long ip = (unsigned long long)v;
+    unsigned long long fr = (unsigned long long)((v - (double)ip) * (double)p10 + 0.5);
+    if (fr >= p10) { fr -= p10; ip++; }
+    char d[24];
+    int nd = 0;
+    do { d[nd++] = (char)('0' + ip % 10); ip /= 10; } while (ip);
+    size_t n = 0;
+    while (nd && n < max) tmp[n++] = d[--nd];
+    while (zeros-- > 0 && n < max) tmp[n++] = '0';
+    if (prec && n < max) tmp[n++] = '.';
+    for (unsigned long long q = p10 / 10; q && n < max; q /= 10) tmp[n++] = (char)('0' + fr / q % 10);
+    return (int)n;
+}
+
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
     struct out o = { buf, size, 0 };
     for (; *fmt; fmt++) {
@@ -68,11 +94,16 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
             else if (*fmt == '0') zero = true;
             else break;
         }
-        int width = 0;
+        int width = 0, prec = -1;
         while (*fmt >= '0' && *fmt <= '9') width = width * 10 + (*fmt++ - '0');
+        if (*fmt == '.') {
+            fmt++;
+            prec = 0;
+            while (*fmt >= '0' && *fmt <= '9') prec = prec * 10 + (*fmt++ - '0');
+        }
         int lng = 0;
         while (*fmt == 'l' || *fmt == 'z') { lng++; fmt++; }
-        char tmp[24];
+        char tmp[48];
         const char *s = tmp;
         int n = 0;
         bool neg = false;
@@ -99,7 +130,14 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list ap) {
             s = va_arg(ap, const char *);
             if (!s) s = "(null)";
             n = (int)strlen(s);
+            if (prec >= 0 && n > prec) n = prec;
             break;
+        case 'f': case 'F': {                 /* Day 12 session */
+            double v = va_arg(ap, double);
+            n = fmt_double(tmp, sizeof tmp, v, prec < 0 ? 6 : prec, &neg);
+            s = tmp;
+            break;
+        }
         case 'c':
             tmp[0] = (char)va_arg(ap, int);
             n = 1;

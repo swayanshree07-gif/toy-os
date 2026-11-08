@@ -51,4 +51,31 @@ echo a | cd /
 echo a | | wc
 echo "a|b" | wc
 rm /w2/nums /w2/moved /w2
+# Day 12 session: background jobs, jobs/fg/wait, exec
+spin 400 &
+jobs
+echo "prompt is back"
+wait
+seq 3 | wc > /bgout &
+wait
+cat /bgout
+rm /bgout
+child exit 4 &
+wait
+status
+fg
+cd / &
+&
+tsh /etc/exectest.sh
+status
+# builtins with redirection (dup/dup2 in the shell)
+cd /bin
+pwd > /bout
+help >> /bout
+cd /
+grep jobs: < /bout
+grep -c / /bout
+pwd > /nodir/x
+echo "console is back"
+rm /bout
 exit 5

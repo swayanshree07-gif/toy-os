@@ -43,6 +43,7 @@ TernOS [0-9.]+ booting
 \[TEST\] elf loader ok: /bin/hello exit 42, /bin/fstest \+ /bin/ulibtest passed, /bin/segv killed, ENOENT/EACCES/ENOEXEC rejected, no frames leaked
 \[TEST\] ulibc ok: printf formats, brk, 3000 malloc/realloc/free ops, heap [0-9]+ KiB in 1 free block\(s\)
 \[TEST\] wait ok: spawn/wait exit codes, wait\(-1\) x4, ECHILD, getppid, fault status 142, chdir/getcwd
+\[TEST\] exec ok: pid [0-9]+ ran exectest -> exectest stage2 -> child, exit 77, fds/cwd/children kept, no frames leaked
 \[TEST\] process tree ok: orphans reaped, [0-9]+ processes live, no frames leaked
 # Day 9 session: kill, interrupted waits, spawn fds, proclist/sysinfo, FPU state
 \[TEST\] kill ok: spinner, sleeper \([0-9]+ ms\), waiter, self killed with 137; spawn fds redirect; proclist [0-9]+ procs; sysinfo
@@ -105,6 +106,26 @@ TernOS [0-9.]+ booting
 ^tsh: empty pipeline stage
 ^1 1 4
 ^pipes: [0-9]+ open, [0-9]+ created, [0-9]+ bytes moved
+# Day 12 session: background jobs and exec in the script
+^\[1\] [0-9]+.?$
+^\[1\] running +[0-9]+ +spin 400
+^prompt is back
+^\[1\] done +spin 400
+^\[1\] done +seq 3 \| wc > /bgout
+^3 3 6
+^\[1\] exit 4 +child exit 4
+^4.?$
+^tsh: fg: no such job
+^tsh: cd: builtins can't run in the background
+^tsh: & without a command
+^before exec
+^tsh: exec: nosuchprog: not found
+^replaced by exec
+^jobs: prog & +\(background\)
+^\+ grep -c / /bout
+^3.?$
+^tsh: /nodir/x: not found
+^console is back
 \[TEST\] shell script ok: exit 5
 # Day 23: interactive shell typed by the harness
 tern:/\$ echo hi from tsh
@@ -120,5 +141,7 @@ tern:/etc\$ yes \| /bin/spin 30000
 ^spin: started \(pid [0-9]+, 30000 ms\)
 ^tsh: yes: interrupted
 ^tsh: /bin/spin: interrupted
+^\[1\] running +[0-9]+ +spin 600
+^\[1\] done +spin 600
 tern:/etc\$ exit 3
 \[TEST\] shell ok: interactive session, exit 3

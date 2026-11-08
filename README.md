@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 11 session; plan Days 1–27 done)
+## Status (Day 12 session; plan Days 1–27 done, re-plan sessions 12–13 mostly done)
 
 ![demo](docs/demo.png)
 
@@ -73,6 +73,11 @@ Working:
   `printf`/`snprintf`, `malloc`/`free`/`calloc`/`realloc` on top of a `brk` system call.
   Test programs: `hello`, `fstest`, `ulibtest`, `segv`, `spawntest`, `child`, `ttytest`,
   `killtest`, `fputest`
+- **exec** (`exec(path, argv)`): replaces the program of the calling process in place
+  (same pid, parent, children, process group, fds and cwd). The new image is built in a
+  fresh address space first, so a failed exec returns with nothing changed; the FPU state
+  is reset and the screen released. **`waitpid(pid, &status, TERN_WNOHANG)`** polls
+  without blocking. **`dup` / `dup2`** share an open file (and its offset)
 - **Processes**: `spawn(path, argv, fds)` / `wait(pid or -1, &status)` / `getppid`, a process
   tree (parent → children), exit status 128 + vector for faulted processes, `-ECHILD`;
   children whose parent exits first become orphans and are freed by a kernel reaper thread.
@@ -102,8 +107,12 @@ Working:
   `#` comments, builtins `cd`, `pwd`, `exit [code]`, `status`, `help`; other words run
   `/bin/<name>` (or a path) and wait for it, in the foreground (Ctrl-C stops it).
   Redirections `< in`, `> out`, `>> out` (append), `2> err` (passed to the child through
-  `spawn`'s fd argument). Pipelines `a | b | c` (up to 8 stages, one process group).
-  `tsh FILE` runs a script. A normal boot starts the shell on the
+  `spawn`'s fd argument; builtins get them through `dup`/`dup2`, e.g. `help > file`).
+  Pipelines `a | b | c` (up to 8 stages, one process group). **Background jobs**: a line
+  ending in `&` starts without waiting (own process group, stdin `/dev/null`), prints
+  `[N] PGID`, and `[N] done ...` is reported before a later prompt; builtins `jobs`,
+  `fg [%N]` and `wait` (both wait in the foreground, so Ctrl-C stops the job).
+  `exec prog args` replaces the shell. `tsh FILE` runs a script. A normal boot starts the shell on the
   console and restarts it when it exits
 - **Programs**: `echo [-n]`, `cat`, `ls`, `uptime`, `ps`, `mem`, `kill`, `rm`, `mkdir`,
   `wc`, `grep [-v] [-c]`, `head [-n N]`, `seq`, `yes`, `tee [-a]`, `cp`, `mv`,
@@ -126,15 +135,15 @@ Working:
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: `exec`, background jobs (`&`), redirection/pipes for shell builtins, BIOS
-(non-UEFI) boot, SMP.
+Not yet: builtins inside pipelines, job control beyond `&`/`fg`/`wait` (no stopping /
+`bg`), block devices and on-disk file systems, BIOS (non-UEFI) boot, SMP.
 
 ### Adding a user program
 
 Drop `user/bin/<name>.c` (with `#include "tern.h"` and a `main(int argc, char **argv)`) into
 the tree; `make` compiles it, links it with `user/lib` at 0x400000 and packs it into the
 initrd as `/bin/<name>`. Floating point / SSE may be used (state is saved per thread);
-there is no `printf("%f")` yet.
+`printf` supports `%f` / `%.Nf` (up to 9 decimals) and `%.Ns`.
 
 ## Requirements
 
@@ -194,9 +203,15 @@ with `sendkey` in stages, each started by a prompt in the serial log (`KEY_STAGE
 `tests/run_tests.sh`): `hi T!` for the kernel keyboard test, edited lines and Ctrl-D for
 `/bin/ttytest`, and an interactive `tsh` session (`echo`, `cd`, `pwd`, `spin 20000`, then
 Ctrl-C once spin has started, `status` → 130, then the pipeline `yes | /bin/spin 30000`
-and Ctrl-C, which must stop both stages, `exit 3`). Before that, `tsh /etc/shtest.sh`
+and Ctrl-C, which must stop both stages, a background `spin 600 &` with `jobs` and `wait`,
+`exit 3`). Before that, `tsh /etc/shtest.sh`
 runs a script whose output lines are checked by markers (including redirection, `wc`,
-`rm`, `mkdir`, `ps`, `mem`, `kill`, pipelines, `grep`/`head`/`seq`/`yes`/`tee`, `cp`/`mv`).
+`rm`, `mkdir`, `ps`, `mem`, `kill`, pipelines, `grep`/`head`/`seq`/`yes`/`tee`, `cp`/`mv`,
+background jobs, `jobs`/`fg`/`wait`, the `exec` builtin via `/etc/exectest.sh`, and
+builtins with redirection). `/bin/exectest` checks exec from ring 3 (failing execs leave
+the process untouched; after two execs pid, parent, an open fd with its offset, the cwd
+and a running child are all still there, `.data`/`.bss` and MXCSR are fresh), `dup`/`dup2`
+and `waitpid(WNOHANG)`; the kernel runs it twice and checks that no frames leaked.
 `/bin/killtest` checks kill and spawn redirection from ring 3, `/bin/pipetest` checks
 pipes (EOF, EPIPE, a 108894-byte transfer through the 4 KiB buffer, a 3-stage pipeline,
 kill while blocked in a pipe read or write, EMFILE), process groups, rename and the
@@ -245,7 +260,7 @@ kernel/mm/            pmm.c (frames), vmm.c (page tables), heap.c (kmalloc), mm_
 kernel/main.c         kmain and boot-time self-tests
 kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
-initrd/               files packed into the initrd image (etc/motd, etc/shtest.sh)
+initrd/               files packed into the initrd image (etc/motd, etc/shtest.sh, etc/exectest.sh)
 user/                 user space: linker.ld, lib/ (crt0, tern.h, ulib.c, malloc.c), bin/ (programs)
 tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot
                       script, ppmstat.py (screenshot checks)

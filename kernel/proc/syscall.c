@@ -103,6 +103,25 @@ static long sys_close(uint64_t fd) {
     return 0;
 }
 
+static long sys_dup(uint64_t fd, uint64_t newfd, bool two) {
+    struct file *f = fd_get(fd);
+    if (!f) return -EBADF;
+    struct process *p = proc_current();
+    if (two) {
+        if (newfd >= PROC_MAX_FDS) return -EBADF;
+        if (newfd == fd) return (long)fd;
+    } else {
+        newfd = 0;
+        while (newfd < PROC_MAX_FDS && p->fds[newfd]) newfd++;
+        if (newfd == PROC_MAX_FDS) return -EMFILE;
+    }
+    file_hold(f);
+    struct file *old = p->fds[newfd];
+    p->fds[newfd] = f;
+    if (old) file_close(old);
+    return (long)newfd;
+}
+
 static long sys_lseek(uint64_t fd, uint64_t off, uint64_t whence) {
     struct file *f = fd_get(fd);
     if (!f) return -EBADF;
@@ -204,6 +223,27 @@ static long sys_brk(uint64_t want) {
 #define SPAWN_ARGV_MAX   32
 #define SPAWN_ARGV_BYTES 2048
 
+/* Copy a user argv array (NULL-terminated, may be NULL) into argv/strs (kernel). With
+ * no arguments at all, argv[0] is the path, as a shell would pass it. */
+static int copy_user_argv(uint64_t uargv, const char **argv, char *strs, const char *path) {
+    size_t used = 0;
+    int argc = 0;
+    for (; uargv; argc++) {
+        uint64_t slot = uargv + (uint64_t)argc * 8;
+        if (slot < uargv || !user_ok(slot, 8, false)) return -EFAULT;
+        uint64_t s = *(const uint64_t *)slot;
+        if (!s) break;
+        if (argc == SPAWN_ARGV_MAX || used == SPAWN_ARGV_BYTES) return -EINVAL;
+        int rc = copy_user_str(strs + used, s, SPAWN_ARGV_BYTES - used);
+        if (rc) return rc == -ENAMETOOLONG ? -EINVAL : rc;
+        argv[argc] = strs + used;
+        used += strlen(strs + used) + 1;
+    }
+    argv[argc] = NULL;
+    if (argc == 0) { argv[0] = path; argv[1] = NULL; }
+    return 0;
+}
+
 /* spawn(path, argv): argv strings are copied into one kernel buffer first. */
 static long sys_spawn(uint64_t upath, uint64_t uargv, uint64_t ufds) {
     char path[VFS_PATH_MAX];
@@ -221,33 +261,32 @@ static long sys_spawn(uint64_t upath, uint64_t uargv, uint64_t ufds) {
     const char *argv[SPAWN_ARGV_MAX + 1];
     char *strs = kmalloc(SPAWN_ARGV_BYTES);
     if (!strs) return -ENOMEM;
-    size_t used = 0;
-    int argc = 0;
-    for (; uargv; argc++) {
-        uint64_t slot = uargv + (uint64_t)argc * 8;
-        if (slot < uargv || !user_ok(slot, 8, false)) { rc = -EFAULT; goto out; }
-        uint64_t s = *(const uint64_t *)slot;
-        if (!s) break;
-        if (argc == SPAWN_ARGV_MAX || used == SPAWN_ARGV_BYTES) { rc = -EINVAL; goto out; }
-        rc = copy_user_str(strs + used, s, SPAWN_ARGV_BYTES - used);
-        if (rc) { if (rc == -ENAMETOOLONG) rc = -EINVAL; goto out; }
-        argv[argc] = strs + used;
-        used += strlen(strs + used) + 1;
-    }
-    argv[argc] = NULL;
-    /* no argv at all: argv[0] is the path, as a shell would pass it */
-    if (argc == 0) { argv[0] = path; argv[1] = NULL; }
+    rc = copy_user_argv(uargv, argv, strs, path);
     /* (the files stay referenced by our fd table while the child takes its own refs) */
-    rc = proc_spawn_child(path, argv, files);
-out:
+    if (!rc) rc = proc_spawn_child(path, argv, files);
     kfree(strs);
     return rc;
 }
 
-static long sys_wait(uint64_t pid, uint64_t ustatus) {
+/* exec(path, argv): everything is copied out of the old image before it goes away. */
+static long sys_exec(uint64_t upath, uint64_t uargv, struct regs *r) {
+    char path[VFS_PATH_MAX];
+    int rc = copy_user_str(path, upath, sizeof path);
+    if (rc) return rc;
+    const char *argv[SPAWN_ARGV_MAX + 1];
+    char *strs = kmalloc(SPAWN_ARGV_BYTES);
+    if (!strs) return -ENOMEM;
+    rc = copy_user_argv(uargv, argv, strs, path);
+    if (!rc) rc = proc_exec(path, argv, r);
+    kfree(strs);
+    return rc;
+}
+
+static long sys_wait(uint64_t pid, uint64_t ustatus, uint64_t flags) {
+    if (flags & ~(uint64_t)TERN_WNOHANG) return -EINVAL;
     if (ustatus && !user_ok(ustatus, sizeof(int), true)) return -EFAULT;
     int code = 0;
-    int rc = proc_wait_child((int)pid, &code);
+    int rc = proc_wait_child((int)pid, &code, flags & TERN_WNOHANG);
     /* our own memory cannot have changed while we slept (one thread per process) */
     if (rc > 0 && ustatus) *(int *)ustatus = code;
     return rc;
@@ -389,7 +428,7 @@ static long syscall_do(struct regs *r) {
     case SYS_fstat:     return sys_fstat(a0, a1);
     case SYS_brk:       return sys_brk(a0);
     case SYS_spawn:     return sys_spawn(a0, a1, a2);
-    case SYS_wait:      return sys_wait(a0, a1);
+    case SYS_wait:      return sys_wait(a0, a1, a2);
     case SYS_getppid: {
         uint64_t f = irq_save();
         struct process *pp = proc_current()->parent;
@@ -417,6 +456,9 @@ static long syscall_do(struct regs *r) {
     case SYS_fbacquire: return sys_fbacquire(a0);
     case SYS_fbblit:    return sys_fbblit(a0);
     case SYS_poweroff:  return sys_poweroff();
+    case SYS_exec:      return sys_exec(a0, a1, r);
+    case SYS_dup:       return sys_dup(a0, 0, false);
+    case SYS_dup2:      return sys_dup(a0, a1, true);
     default:            return -ENOSYS;
     }
 }

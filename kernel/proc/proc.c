@@ -12,6 +12,7 @@
 #include "vfs.h"
 #include "syscall_nr.h"
 #include "tty.h"
+#include "gdt.h"
 
 extern __attribute__((noreturn)) void enter_user(uint64_t rip, uint64_t rsp);
 
@@ -167,7 +168,7 @@ fail:
 
 /* Initial user stack (System V x86-64 process entry): rsp -> argc, argv[0..argc-1],
  * NULL, envp NULL, auxv AT_NULL pair; strings above. rsp is 16-byte aligned. */
-static int push_argv(struct process *p, const char *const *argv) {
+static int push_argv(uint64_t pml4, uint64_t *stack_top, const char *const *argv) {
     int argc = 0;
     size_t strbytes = 0;
     while (argv && argv[argc]) {
@@ -181,7 +182,7 @@ static int push_argv(struct process *p, const char *const *argv) {
     size_t total = str_area + ALIGN_UP(words * 8, 16);
     uint8_t *buf = kzalloc(total);
     if (!buf) return -ENOMEM;
-    uint64_t base = p->stack_top - total;          /* user address of buf[0] */
+    uint64_t base = *stack_top - total;            /* user address of buf[0] */
     uint64_t *w = (uint64_t *)buf;
     uint64_t str_va = base + total - str_area;
     char *str = (char *)buf + total - str_area;
@@ -193,9 +194,9 @@ static int push_argv(struct process *p, const char *const *argv) {
         str += n; str_va += n;
     }
     /* w[argc+1] = NULL, envp NULL, auxv {0, 0}: already zero */
-    proc_copy_to_space(p->pml4, base, buf, total);
+    proc_copy_to_space(pml4, base, buf, total);
     kfree(buf);
-    p->stack_top = base;
+    *stack_top = base;
     return 0;
 }
 
@@ -203,35 +204,99 @@ struct process *proc_spawn_elf(const char *path, const char *const *argv, int *e
     return proc_spawn_elf_fds(path, argv, NULL, err);
 }
 
-struct process *proc_spawn_elf_fds(const char *path, const char *const *argv,
-                                   struct file *const *files, int *err) {
+/* Read the executable at path (relative to the caller's cwd) into a kernel buffer. */
+static int read_image(const char *path, uint8_t **img_out, size_t *len_out) {
     struct process *cur = proc_current();
     struct file *f;
     int rc = vfs_open(cur ? cur->cwd : NULL, path, O_RDONLY, &f);
-    if (rc) { *err = rc; return NULL; }
+    if (rc) return rc;
     struct tern_stat st;
     vfs_stat(f->node, &st);
-    if (st.type != TERN_FT_FILE) { file_close(f); *err = -EACCES; return NULL; }
+    if (st.type != TERN_FT_FILE) { file_close(f); return -EACCES; }
     /* Read a private copy: the file may be written while we load it. */
     uint8_t *img = st.size ? kmalloc(st.size) : NULL;
     long n = img ? file_read(f, img, st.size) : -ENOEXEC;
     file_close(f);
-    if (n != (long)st.size) { kfree(img); *err = n < 0 ? (int)n : -EIO; return NULL; }
+    if (n != (long)st.size) { kfree(img); return n < 0 ? (int)n : -EIO; }
+    *img_out = img;
+    *len_out = st.size;
+    return 0;
+}
 
+static const char *base_name(const char *path) {
     const char *name = path;
     for (const char *q = path; *q; q++) if (*q == '/' && q[1]) name = q + 1;
+    return name;
+}
+
+struct process *proc_spawn_elf_fds(const char *path, const char *const *argv,
+                                   struct file *const *files, int *err) {
+    uint8_t *img;
+    size_t len;
+    int rc = read_image(path, &img, &len);
+    if (rc) { *err = rc; return NULL; }
     if (live_procs >= PROC_MAX_LIVE) { kfree(img); *err = -EAGAIN; return NULL; }
-    struct process *p = proc_alloc(name, files);
+    struct process *p = proc_alloc(base_name(path), files);
     if (!p) { kfree(img); *err = -ENOMEM; return NULL; }
     uint64_t brk;
-    rc = elf_load(p->pml4, img, st.size, &p->entry, &brk);
+    rc = elf_load(p->pml4, img, len, &p->entry, &brk);
     p->brk_base = p->brk = brk;
     kfree(img);
     if (!rc) rc = map_stack(p) ? -ENOMEM : 0;
-    if (!rc) rc = push_argv(p, argv);
+    if (!rc) rc = push_argv(p->pml4, &p->stack_top, argv);
     if (!rc) rc = proc_start(p);
     if (rc) { proc_free_failed(p); *err = rc; return NULL; }
     return p;
+}
+
+/* exec (Day 12 session): build the new image in a fresh address space; only once that
+ * has fully worked is the old one dropped, so a failed exec returns to the caller
+ * untouched. pid, parent, children, pgid, fds and cwd stay. */
+int proc_exec(const char *path, const char *const *argv, struct regs *r) {
+    struct process *p = proc_current();
+    kassert(p);
+    uint8_t *img;
+    size_t len;
+    int rc = read_image(path, &img, &len);
+    if (rc) return rc;
+    uint64_t pml4 = vmm_new_space();
+    if (!pml4) { kfree(img); return -ENOMEM; }
+    uint64_t entry, brk, stack_top = USER_STACK_TOP;
+    rc = elf_load(pml4, img, len, &entry, &brk);
+    kfree(img);
+    if (!rc && vmm_map_user_pages(pml4, USER_STACK_TOP - USER_STACK_PAGES * PAGE_SIZE,
+                                  USER_STACK_PAGES, PTE_W | PTE_NX))
+        rc = -ENOMEM;
+    if (!rc) rc = push_argv(pml4, &stack_top, argv);
+    if (rc) { vmm_destroy_space(pml4); return rc; }
+
+    fbdev_release_by(p->pid);           /* the new program knows nothing of the screen */
+    uint64_t f = irq_save();
+    uint64_t old = p->pml4;
+    p->pml4 = pml4;
+    p->thread->cr3 = pml4;
+    __asm__ volatile("mov %0, %%cr3" : : "r"(pml4) : "memory");
+    memset(p->name, 0, sizeof p->name);
+    const char *name = base_name(path);
+    for (unsigned i = 0; i < sizeof p->name - 1 && name[i]; i++) p->name[i] = name[i];
+    p->entry = entry;
+    p->stack_top = stack_top;
+    p->brk_base = p->brk = brk;
+    sched_fpu_reset_current();
+    irq_restore(f);
+    vmm_destroy_space(old);
+    p->execs++;
+    /* return to the new entry point with a clean register file (rax = 0) */
+    memset(r, 0, sizeof *r);
+    r->vector = 0x100;
+    r->rip = entry;
+    r->rcx = entry;
+    r->cs = GDT_UCODE | 3;
+    r->ss = GDT_UDATA | 3;
+    r->rsp = stack_top;
+    r->rflags = 0x202;
+    r->r11 = 0x202;
+    return 0;
 }
 
 static void push_orphan(struct process *p) {
@@ -309,7 +374,7 @@ int proc_spawn_child(const char *path, const char *const *argv, struct file *con
     return c ? c->pid : err;
 }
 
-int proc_wait_child(int pid, int *code) {
+int proc_wait_child(int pid, int *code, bool nohang) {
     struct process *p = proc_current();
     kassert(p);
     uint64_t f = irq_save();
@@ -323,6 +388,7 @@ int proc_wait_child(int pid, int *code) {
             if (c->exited) { found = c; break; }
         }
         if (found || !any) break;
+        if (nohang) { irq_restore(f); return 0; }
         if (p->kill_code) { irq_restore(f); return -EINTR; }
         waitq_sleep(&p->child_wq);
     }

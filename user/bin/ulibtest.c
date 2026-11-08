@@ -24,6 +24,11 @@ int main(void) {
     FMT("ab/Z/%/(null)", "%s/%c/%%/%s", "ab", 'Z', (char *)0);
     FMT("-9223372036854775808", "%ld", (long)-9223372036854775807L - 1);
     CHECK(snprintf(b, 5, "%s", "truncated") == 9 && strcmp(b, "trun") == 0);
+    /* Day 12 session: %f with precision, width, rounding, sign; %.Ns */
+    FMT("3.141593|2.50|-0.1|   1.0|0|nan|-inf", "%f|%.2f|%.1f|%6.1f|%.0f|%f|%f",
+        3.14159265, 2.5, -0.05, 0.96, 0.4, __builtin_nan(""), -__builtin_inf());
+    FMT("-0001.25|1.000|1e|12345678901.5", "%08.2f|%-5.3f|%.2s|%.1f", -1.25, 0.9996, "1e9",
+        12345678901.5);
 
     /* brk */
     long base = brk(0);

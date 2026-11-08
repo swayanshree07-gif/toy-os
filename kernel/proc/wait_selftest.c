@@ -10,6 +10,7 @@
 #include "kprintf.h"
 #include "vfs.h"
 #include "heap.h"
+#include "string.h"
 
 static int run_prog(const char *path) {
     int err = 0;
@@ -42,6 +43,33 @@ void test_wait(void) {
         panic("proc: frames leaked: %lu -> %lu", frames0, pmm_free_frames());
     kprintf("[TEST] process tree ok: orphans reaped, %u processes live, no frames leaked\n",
             proc_live_count());
+}
+
+/* Day 12 session: exec + waitpid(WNOHANG) (user/bin/exectest.c). The process execs
+ * twice (exectest -> exectest stage2 -> child exit 77); the second run must give back
+ * every frame. */
+void test_exec(void) {
+    unsigned live0 = proc_live_count();
+    struct process info;
+    int code = 0, err = 0, pid = 0;
+    uint64_t frames0 = 0;
+    for (int run = 0; run < 2; run++) {
+        if (run == 1) { wait_live(live0); frames0 = pmm_free_frames(); }
+        const char *argv[] = { "exectest", NULL };
+        struct process *p = proc_spawn_elf("/bin/exectest", argv, &err);
+        if (!p) panic("spawning exectest failed (%d)", err);
+        pid = p->pid;
+        code = proc_wait(p, &info);
+        if (code != 77) panic("exectest failed check %d", code);
+        if (info.execs != 2 || info.pid != pid || strcmp(info.name, "child"))
+            panic("exec: %u execs, pid %d -> %d, name '%s'", info.execs, pid, info.pid,
+                  info.name);
+    }
+    wait_live(live0);
+    if (pmm_free_frames() != frames0)
+        panic("exec: frames leaked: %lu -> %lu", frames0, pmm_free_frames());
+    kprintf("[TEST] exec ok: pid %d ran exectest -> exectest stage2 -> child, exit %d, "
+            "fds/cwd/children kept, no frames leaked\n", pid, code);
 }
 
 /* Day 9 session: kill / interrupted waits / spawn fds / proclist (user/bin/killtest.c). */

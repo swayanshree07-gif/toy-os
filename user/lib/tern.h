@@ -40,6 +40,12 @@ static inline int spawn(const char *path, const char *const *argv) { return (int
 /* fds[3]: our fd to give the child as its fd 0/1/2, or -1 for the console */
 static inline int spawn_fds(const char *path, const char *const *argv, const int *fds) { return (int)SC3(SYS_spawn, path, argv, fds); }
 static inline int wait(int pid, int *status)              { return (int)SC2(SYS_wait, pid, status); }
+/* flags: TERN_WNOHANG = return 0 at once if no matching child has exited yet */
+static inline int waitpid(int pid, int *status, int flags) { return (int)SC3(SYS_wait, pid, status, flags); }
+/* Day 12 session: replace this program; returns only on failure (negative errno) */
+static inline int exec(const char *path, const char *const *argv) { return (int)SC2(SYS_exec, path, argv); }
+static inline int dup(int fd)                             { return (int)SC1(SYS_dup, fd); }
+static inline int dup2(int fd, int newfd)                 { return (int)SC2(SYS_dup2, fd, newfd); }
 static inline int getppid(void)                           { return (int)SC0(SYS_getppid); }
 static inline int chdir(const char *p)                    { return (int)SC1(SYS_chdir, p); }
 static inline long getcwd(char *buf, size_t n)            { return SC2(SYS_getcwd, buf, n); }

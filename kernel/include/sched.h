@@ -79,4 +79,7 @@ void sched_dump(void);
 
 void test_sched(void);
 
+/* exec (Day 12 session): reset the running user thread's FPU/SSE registers. */
+void sched_fpu_reset_current(void);
+
 #endif
