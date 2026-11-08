@@ -114,6 +114,10 @@ cat /disk/ted.txt
 ted /disk/ted.txt < /etc/ted.cmds2
 cat /disk/ted.txt | wc
 rm /disk/ted.txt
+tide 7 < /etc/tide.moves
+echo ......xq | tide 7
+echo wwww........................ | tide 7
+tide 7 extra
 ls /disk
 cat /disk/hello.txt
 cp /disk/hello.txt /hcopy

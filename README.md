@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 18 session; plan Days 1–27 done, re-plan sessions 12–18 done; Days 18–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 19 session; plan Days 1–27 done, re-plan sessions 12–19 done; Days 20–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -60,6 +60,12 @@ Working:
   `A,B`, `+N`/`-N`; commands `a`/`i`/`c` (text ends with a lone `.`), `d`, `p`, `n`, `=`,
   `w [FILE]`, `q` (warns once about unsaved changes), `Q`. Errors print `? reason`.
   Example: `ted /disk/notes/todo.txt`, then `,n`, `$a`, `new item`, `.`, `w`, `q`.
+- **Game** `/bin/tide [SEED]` (Day 19, own design): an island of heights 0–9; the tide
+  rises one level every 5 moves and floods cells at or below it. Collect 3 shells (`*`), then
+  reach the lighthouse (`L`) before you drown. Keys `w a s d` move, `.` waits, `?` hints the
+  next move of a shortest solution (built-in BFS solver; every generated island is
+  solvable), `m` map, `q` quit. Same seed → same island. Host build for finding scripted
+  solutions: `cc -DTIDE_HOST user/bin/tide.c -o tide && ./tide 7 -solve`.
 - **Disk image tool** `tools/fatimg.py` (Day 17, own code, no mtools): `mkfs`, `ls [-R]`,
   `put`, `get`, `mkdir`, `rm`, `fsck` (FAT copies equal, valid chains, no cross-links,
   sizes match chains, `.`/`..` correct, no lost clusters) on FAT16 superfloppy images.

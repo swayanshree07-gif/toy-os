@@ -179,3 +179,15 @@ tern:/etc\$ exit 3
 ^title.?$
 ^line one.?$
 ^27.?$
+# Day 19: tide grid game, seed 7 (solution found with the host build: cc -DTIDE_HOST)
+^tide: seed 7 \(island 0\), collect 3 shells
+^  ~~1@699\*9999.?$
+^tide: hint d \(22 moves to win\)
+^tide: shell! 3/3
+^  ~~~~~58@9975.?$
+^tide: WON seed 7 in 22 moves, 3/3 shells, tide 4
+^tide: unknown key 'x'
+^tide: gave up after 6 moves
+^tide: splash, that is water
+^tide: DROWNED at move 5 with 0/3 shells
+^usage: tide \[SEED\]
