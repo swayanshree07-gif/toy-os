@@ -172,6 +172,10 @@ static struct vnode *create_locked(struct vnode *cwd, const char *path,
     if (dir_find(d, name, nlen)) { *err = -EEXIST; return NULL; }
     struct vnode *v = node_new(type, name, nlen);
     if (!v) { *err = -ENOMEM; return NULL; }
+    if (d->ops && d->ops->create) {
+        int rc = d->ops->create(d, v);
+        if (rc) { node_free(v); *err = rc; return NULL; }
+    }
     dir_link(d, v);
     hold_locked(v);
     return v;
@@ -198,6 +202,10 @@ int vfs_unlink(struct vnode *cwd, const char *path) {
     struct vnode *v = walk(cwd, path, &err, false, NULL, NULL);
     if (v && v == root) err = -EACCES, v = NULL;
     if (v && v->type == VN_DIR && v->children) err = -ENOTEMPTY, v = NULL;
+    if (v && v->parent->ops && v->parent->ops->unlink) {
+        err = v->parent->ops->unlink(v->parent, v);
+        if (err) v = NULL;
+    }
     if (v) dir_unlink(v->parent, v);
     mutex_unlock(&vfs_lock);
     return v ? 0 : err;
@@ -213,6 +221,9 @@ int vfs_rename(struct vnode *cwd, const char *from, const char *to) {
     if (!d) goto out;
     if (src == root || !src->parent) { err = -EBUSY; goto out; }
     if (d->type != VN_DIR) { err = -ENOTDIR; goto out; }
+    if ((d->ops && d->ops->create) || (src->parent->ops && src->parent->ops->unlink)) {
+        err = -EXDEV; goto out;                     /* disk directories: no rename */
+    }
     if (src->type == VN_DIR)                        /* not into its own subtree */
         for (struct vnode *a = d; a; a = a->parent)
             if (a == src) { err = -EINVAL; goto out; }
@@ -290,9 +301,12 @@ int vfs_open(struct vnode *cwd, const char *path, int flags, struct file **out) 
     err = 0;
     if (v->type == VN_DIR && (flags & O_ACCMODE) != O_RDONLY) err = -EISDIR;
     else if (v->type != VN_DIR && (flags & O_DIRECTORY)) err = -ENOTDIR;
-    if (!err && v->type == VN_FILE && v->ops && (flags & O_ACCMODE) != O_RDONLY) err = -EROFS;
-    if (!err && v->type == VN_FILE && (flags & O_TRUNC) && (flags & O_ACCMODE) != O_RDONLY)
-        v->size = 0;
+    if (!err && v->type == VN_FILE && v->ops && !v->ops->write && (flags & O_ACCMODE) != O_RDONLY)
+        err = -EROFS;
+    if (!err && v->type == VN_FILE && (flags & O_TRUNC) && (flags & O_ACCMODE) != O_RDONLY) {
+        if (v->ops && v->ops->truncate) err = v->ops->truncate(v);
+        else v->size = 0;
+    }
     struct file *f = err ? NULL : file_new(v, flags);
     if (!err && !f) err = -ENOMEM;
     if (err) put_locked(v);
@@ -371,11 +385,15 @@ long file_write(struct file *f, const void *buf, size_t len) {
         return v->ops->write(v, buf, len, f->off);
     }
     if (v->type != VN_FILE) return -EISDIR;
-    if (v->ops) return -EROFS;
+    if (v->ops && !v->ops->write) return -EROFS;
     mutex_lock(&vfs_lock);
     if (f->flags & O_APPEND) f->off = v->size;
     long rc;
-    if (len > FILE_MAX_SIZE || f->off > FILE_MAX_SIZE - len) {
+    if (v->ops) {                                  /* disk file */
+        rc = len > FILE_MAX_SIZE || f->off > FILE_MAX_SIZE - len ? -ENOSPC
+                                                                 : v->ops->write(v, buf, len, f->off);
+        if (rc > 0) f->off += (uint64_t)rc;
+    } else if (len > FILE_MAX_SIZE || f->off > FILE_MAX_SIZE - len) {
         rc = -ENOSPC;
     } else if ((rc = grow(v, f->off + len)) == 0) {
         if (f->off > v->size) memset(v->data + v->size, 0, f->off - v->size);  /* hole */

@@ -44,6 +44,8 @@
 #define SIG_ATAPI 0xEB140101u
 
 #define ATA_READ_DMA_EXT 0x25
+#define ATA_WRITE_DMA_EXT 0x35
+#define ATA_FLUSH_CACHE_EXT 0xEA
 #define ATA_IDENTIFY     0xEC
 #define MAX_DISKS 6
 #define SPIN_LIMIT 50000000u
@@ -99,7 +101,9 @@ static int issue(int d, uint8_t cmd, uint64_t lba, unsigned count, uint32_t byte
     if (!pwait(p, P_TFD, TFD_BSY | TFD_DRQ, 0)) return -EIO;
     uint32_t *hdr = (uint32_t *)m->va;                 /* command header, slot 0 */
     memset(hdr, 0, 32);
-    hdr[0] = 5 | (1u << 16);                           /* CFL = 5 dwords, PRDTL = 1, read */
+    bool write = cmd == ATA_WRITE_DMA_EXT;
+    /* CFL = 5 dwords, PRDTL = 1 (0 for non-data commands), W bit for writes */
+    hdr[0] = 5 | (write ? 1u << 6 : 0) | (bytes ? 1u << 16 : 0);
     uint64_t ct_pa = m->pa + 0x500;
     hdr[2] = (uint32_t)ct_pa;
     hdr[3] = (uint32_t)(ct_pa >> 32);
@@ -108,13 +112,13 @@ static int issue(int d, uint8_t cmd, uint64_t lba, unsigned count, uint32_t byte
     uint8_t *fis = ct;                                 /* H2D register FIS */
     fis[0] = 0x27; fis[1] = 0x80; fis[2] = cmd;
     fis[4] = lba; fis[5] = lba >> 8; fis[6] = lba >> 16;
-    fis[7] = cmd == ATA_IDENTIFY ? 0 : 0x40;           /* LBA mode */
+    fis[7] = cmd == ATA_IDENTIFY || cmd == ATA_FLUSH_CACHE_EXT ? 0 : 0x40;           /* LBA mode */
     fis[8] = lba >> 24; fis[9] = lba >> 32; fis[10] = lba >> 40;
     fis[12] = count; fis[13] = count >> 8;
     uint32_t *prdt = (uint32_t *)(ct + 0x80);
     prdt[0] = (uint32_t)m->bounce_pa;
     prdt[1] = (uint32_t)(m->bounce_pa >> 32);
-    prdt[3] = bytes - 1;
+    prdt[3] = bytes ? bytes - 1 : 0;
     pwr(p, P_IS, 0xFFFFFFFFu);
     __asm__ volatile("mfence" ::: "memory");
     pwr(p, P_CI, 1);
@@ -196,6 +200,24 @@ int ahci_read(int d, uint64_t lba, unsigned count, void *buf) {
     uint64_t f = spin_lock_irqsave(&ahci_lock);
     int r = issue(d, ATA_READ_DMA_EXT, lba, count, count * 512);
     if (!r) memcpy(buf, pmem[d].bounce, count * 512);
+    spin_unlock_irqrestore(&ahci_lock, f);
+    return r;
+}
+
+int ahci_write(int d, uint64_t lba, unsigned count, const void *buf) {
+    if (d < 0 || d >= ndisks || count == 0 || count > 8 || lba + count > disks[d].sectors)
+        return -EINVAL;
+    uint64_t f = spin_lock_irqsave(&ahci_lock);
+    memcpy(pmem[d].bounce, buf, count * 512);
+    int r = issue(d, ATA_WRITE_DMA_EXT, lba, count, count * 512);
+    spin_unlock_irqrestore(&ahci_lock, f);
+    return r;
+}
+
+int ahci_flush(int d) {
+    if (d < 0 || d >= ndisks) return -EINVAL;
+    uint64_t f = spin_lock_irqsave(&ahci_lock);
+    int r = issue(d, ATA_FLUSH_CACHE_EXT, 0, 0, 0);
     spin_unlock_irqrestore(&ahci_lock, f);
     return r;
 }

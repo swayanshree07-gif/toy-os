@@ -267,6 +267,110 @@ static void fat_expect(const char *path, const char *want) {
     size_t wl = strlen(want);
     if (n != (long)wl || memcmp(buf, want, wl)) panic("fat: %s read %ld bytes, wrong content", path, n);
 }
+/* Day 16: writing. Everything here goes to the disk at once (write-through). */
+static uint8_t wpat(uint32_t i) { return (uint8_t)(i * 7 + 3); }
+static void fat_write_file(const char *path, int flags, const void *data, size_t len) {
+    struct file *f;
+    int rc = vfs_open(NULL, path, O_WRONLY | O_CREAT | flags, &f);
+    if (rc) panic("fat: open %s for writing: %d", path, rc);
+    long n = file_write(f, data, len);
+    file_close(f);
+    if (n != (long)len) panic("fat: write %s: %ld", path, n);
+}
+#define PERSIST_TEXT "written by TernOS boot 1, read back by boot 2\n"
+static void test_fat_write(void) {
+    struct fat_stats st0, st1;
+    int err = 0;
+    /* persistence across boots (tests/run_tests.sh boots twice on one writable copy) */
+    struct vnode *pv = vfs_lookup(NULL, "/disk/persist.txt", &err);
+    if (pv) {
+        vfs_put(pv);
+        fat_expect("/disk/persist.txt", PERSIST_TEXT);
+        fat_expect("/disk/pdir/p2.txt", "second file in a new directory\n");
+        if (vfs_unlink(NULL, "/disk/pdir/p2.txt") || vfs_unlink(NULL, "/disk/pdir") ||
+            vfs_unlink(NULL, "/disk/persist.txt"))
+            panic("fat: removing the persisted files");
+        kprintf("[TEST] fat: files written by the previous boot read back and removed\n");
+    } else {
+        fat_write_file("/disk/persist.txt", 0, PERSIST_TEXT, sizeof PERSIST_TEXT - 1);
+        if (vfs_mkdir(NULL, "/disk/pdir")) panic("fat: mkdir pdir");
+        fat_write_file("/disk/pdir/p2.txt", 0, "second file in a new directory\n", 31);
+        kprintf("[TEST] fat: persist.txt + pdir/p2.txt written for the next boot\n");
+    }
+    fat_get_stats(&st0);
+    /* big file written in odd chunks (crosses sector/cluster boundaries), read back */
+    static uint8_t buf[3000];
+    struct file *f;
+    if (vfs_open(NULL, "/disk/w1.dat", O_RDWR | O_CREAT, &f)) panic("fat: create w1.dat");
+    uint32_t pos = 0, chunks[] = { 1, 511, 2, 700, 513, 1000, 37 };
+    for (int k = 0; pos < 20000; k++) {
+        uint32_t n = chunks[k % 7];
+        if (n > 20000 - pos) n = 20000 - pos;
+        for (uint32_t i = 0; i < n; i++) buf[i] = wpat(pos + i);
+        if (file_write(f, buf, n) != (long)n) panic("fat: w1.dat write at %u", pos);
+        pos += n;
+    }
+    /* overwrite in the middle, then read everything back through the same fd */
+    if (file_seek(f, 5000, SEEK_SET) != 5000 || file_write(f, "MIDDLE", 6) != 6) panic("fat: overwrite");
+    file_seek(f, 0, SEEK_SET);
+    for (pos = 0; pos < 20000;) {
+        long n = file_read(f, buf, 3000);
+        if (n <= 0) panic("fat: w1.dat read at %u: %ld", pos, n);
+        for (long i = 0; i < n; i++) {
+            uint32_t p = pos + (uint32_t)i;
+            uint8_t want = p >= 5000 && p < 5006 ? (uint8_t)"MIDDLE"[p - 5000] : wpat(p);
+            if (buf[i] != want) panic("fat: w1.dat byte %u wrong", p);
+        }
+        pos += (uint32_t)n;
+    }
+    /* write past the end: the hole reads as zeros */
+    if (file_seek(f, 21000, SEEK_SET) != 21000 || file_write(f, "END", 3) != 3) panic("fat: hole write");
+    file_seek(f, 19990, SEEK_SET);
+    if (file_read(f, buf, 2000) != 1013) panic("fat: read over the hole");
+    for (int i = 10; i < 1010; i++) if (buf[i]) panic("fat: hole byte %d not zero", i);
+    if (memcmp(buf + 1010, "END", 3)) panic("fat: data after hole");
+    file_close(f);
+    /* append and truncate */
+    fat_write_file("/disk/hello2.txt", 0, "one\n", 4);
+    fat_write_file("/disk/hello2.txt", O_APPEND, "two\n", 4);
+    fat_expect("/disk/hello2.txt", "one\ntwo\n");
+    fat_write_file("/disk/hello2.txt", O_TRUNC, "three\n", 6);
+    fat_expect("/disk/hello2.txt", "three\n");
+    /* a new directory with enough files to need more than one directory cluster */
+    if (vfs_mkdir(NULL, "/disk/newdir")) panic("fat: mkdir newdir");
+    char name[40];
+    for (int i = 0; i < 40; i++) {
+        ksnprintf(name, sizeof name, "/disk/newdir/f%d.txt", i);
+        fat_write_file(name, 0, name, strlen(name));
+    }
+    for (int i = 0; i < 40; i++) {
+        ksnprintf(name, sizeof name, "/disk/newdir/f%d.txt", i);
+        fat_expect(name, name);
+    }
+    /* errors: bad 8.3 name, rename on the disk, existing file */
+    if (vfs_open(NULL, "/disk/longfilename.txt", O_WRONLY | O_CREAT, &f) != -ENAMETOOLONG ||
+        vfs_mkdir(NULL, "/disk/a.b.c") != -ENAMETOOLONG)
+        panic("fat: bad 8.3 name accepted");
+    if (vfs_rename(NULL, "/disk/hello2.txt", "/disk/hello3.txt") != -EXDEV) panic("fat: rename not EXDEV");
+    if (vfs_unlink(NULL, "/disk/newdir") != -ENOTEMPTY) panic("fat: rmdir non-empty");
+    /* remove everything again: all clusters must come back */
+    for (int i = 0; i < 40; i++) {
+        ksnprintf(name, sizeof name, "/disk/newdir/f%d.txt", i);
+        if (vfs_unlink(NULL, name)) panic("fat: unlink %s", name);
+    }
+    if (vfs_unlink(NULL, "/disk/newdir") || vfs_unlink(NULL, "/disk/w1.dat") ||
+        vfs_unlink(NULL, "/disk/hello2.txt"))
+        panic("fat: unlink");
+    if (vfs_lookup(NULL, "/disk/w1.dat", &err)) panic("fat: w1.dat still there");
+    fat_get_stats(&st1);
+    if (st1.free_clusters != st0.free_clusters)
+        panic("fat: cluster leak: %lu free before, %lu after", st0.free_clusters, st1.free_clusters);
+    fat_expect("/disk/hello.txt", "Hello from a FAT16 disk!\n");
+    kprintf("[TEST] fat write: 20000-byte file in odd chunks + overwrite + hole, append, truncate, "
+            "mkdir with 40 files (dir grows), 8.3/EXDEV/ENOTEMPTY errors, all unlinked, "
+            "%lu clusters free (no leak), %lu sector writes\n", st1.free_clusters, st1.sector_writes);
+}
+
 static void test_fat(void) {
     int lerr = 0;
     struct vnode *v = vfs_lookup(NULL, "/disk/big.bin", &lerr);
@@ -296,9 +400,6 @@ static void test_fat(void) {
     fat_expect("/disk/docs/deep/nest.txt", "nested ok\n");
     fat_expect("/disk/empty.txt", "");
     fat_expect("/disk/docs/readme.txt", "TernOS FAT16 test disk.\nThis file lives in /disk/docs.\nThird line.\n");
-    if (vfs_open(NULL, "/disk/hello.txt", O_RDWR, &f) != -EROFS ||
-        vfs_open(NULL, "/disk/hello.txt", O_WRONLY | O_TRUNC, &f) != -EROFS)
-        panic("fat: write open not rejected with EROFS");
     fat_expect("/disk/hello.txt", "Hello from a FAT16 disk!\n");
     int err = 0;
     if (vfs_lookup(NULL, "/disk/eleted.txt", &err) || vfs_lookup(NULL, "/disk/terndisk", &err))
@@ -306,8 +407,9 @@ static void test_fat(void) {
     struct fat_stats fs;
     fat_get_stats(&fs);
     kprintf("[TEST] fat: /disk big.bin 100000 bytes (scattered clusters) verified in odd chunks + seek, "
-            "nested dirs, empty file, EROFS on write (%lu sector reads, %lu cache hits)\n",
+            "nested dirs, empty file (%lu sector reads, %lu cache hits)\n",
             fs.sector_reads, fs.cache_hits);
+    test_fat_write();
 }
 
 static void test_ahci(void) {

@@ -22,7 +22,7 @@ KERNEL  := $(BUILD)/ternos.elf
 QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
                -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all iso run run-headless run-iso test clean
+.PHONY: all iso run run-headless run-iso test clean fresh-disk
 .SECONDARY:
 all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI $(BUILD)/ternos.iso
 
@@ -141,11 +141,11 @@ run-iso: $(ISO)
 # so QEMU always gets a fresh throwaway copy (build/boot-esp) of the pristine build/esp.
 BOOT_ESP := rm -rf $(BUILD)/boot-esp && cp -r $(BUILD)/esp $(BUILD)/boot-esp
 
-run: all $(BUILD)/fatdisk.img
+run: all $(BUILD)/disk.img
 	$(BOOT_ESP)
 	$(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp $(FATDISK) -serial stdio
 
-run-headless: all $(BUILD)/fatdisk.img
+run-headless: all $(BUILD)/disk.img
 	$(BOOT_ESP)
 	timeout 60 $(QEMU) $(QEMU_COMMON) -drive format=raw,file=fat:rw:$(BUILD)/boot-esp $(FATDISK) \
 	    -display none -serial stdio
@@ -155,11 +155,17 @@ $(BUILD)/testdisk.img: tools/mktestdisk.py
 	@mkdir -p $(BUILD)
 	python3 tools/mktestdisk.py $@
 
-# FAT16 disk (own writer) mounted read-only at /disk.
+# FAT16 disk (own writer) mounted at /disk. The tests use throwaway copies of it;
+# `make run` uses build/disk.img, made once from it and kept, so files written in the
+# OS survive reboots (delete it, or `make fresh-disk`, to start over).
 $(BUILD)/fatdisk.img: tools/mkfatdisk.py
 	@mkdir -p $(BUILD)
 	python3 tools/mkfatdisk.py $@
-FATDISK := -drive if=none,id=fd,format=raw,snapshot=on,file=$(BUILD)/fatdisk.img -device ide-hd,bus=ide.3,drive=fd
+$(BUILD)/disk.img: | $(BUILD)/fatdisk.img
+	cp $(BUILD)/fatdisk.img $@
+fresh-disk: $(BUILD)/fatdisk.img
+	cp $(BUILD)/fatdisk.img $(BUILD)/disk.img
+FATDISK := -drive if=none,id=fd,format=raw,file=$(BUILD)/disk.img -device ide-hd,bus=ide.3,drive=fd
 
 test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO) $(BUILD)/testdisk.img $(BUILD)/fatdisk.img
 	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)

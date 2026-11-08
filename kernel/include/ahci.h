@@ -16,4 +16,7 @@ int ahci_disk_count(void);
 const struct ahci_disk *ahci_disk_get(int i);
 /* Read `count` (1..8) sectors at `lba` into buf (512*count bytes). 0 or -EIO/-EINVAL. */
 int ahci_read(int disk, uint64_t lba, unsigned count, void *buf);
+/* Write count (1..8) sectors from buf; polled, returns 0 or -EIO/-EINVAL. */
+int ahci_write(int disk, uint64_t lba, unsigned count, const void *buf);
+int ahci_flush(int disk);                  /* FLUSH CACHE EXT */
 #endif

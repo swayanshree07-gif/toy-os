@@ -80,7 +80,7 @@ boot() {
         drive=(-drive format=raw,file=fat:rw:"$esp"
                -drive if=none,id=td,format=raw,snapshot=on,file="$BUILD/testdisk.img"
                -device ide-hd,bus=ide.2,drive=td
-               -drive if=none,id=fd,format=raw,snapshot=on,file="$BUILD/fatdisk.img"
+               -drive if=none,id=fd,format=raw,file="$BUILD/fatdisk-rw.img"
                -device ide-hd,bus=ide.3,drive=fd)
     fi
     local status
@@ -118,9 +118,37 @@ boot() {
     fi
 }
 
+# FAT disk check on the host with mtools (independent of our FAT code):
+# mcheck <description> <command...>
+mcheck() {
+    local what=$1; shift
+    if "$@" > "$BUILD/mtools.out" 2>&1; then echo "  PASS  host: $what"
+    else echo "  FAIL  host: $what"; cat "$BUILD/mtools.out"; overall=1; fi
+}
+# Both positive boots share one writable copy of the FAT disk (Day 16): boot "test"
+# writes persist.txt + pdir/p2.txt, the host reads them with mtools, boot "test-pic"
+# must read them back (and removes them), then the host checks they are gone.
+cp "$BUILD/fatdisk.img" "$BUILD/fatdisk-rw.img"
 for img in test test-pic; do
     cat "$here/expected.txt" "$here/pass-$img.txt" > "$BUILD/markers-$img.txt"
     boot "$img" 33 "$BUILD/markers-$img.txt" 0 KEY_STAGES
+    rw="$BUILD/fatdisk-rw.img"
+    if [ "$img" = test ]; then
+        mcheck "mtype ::PERSIST.TXT" bash -c "mtype -i '$rw' ::PERSIST.TXT | grep -q 'read back by boot 2'"
+        mcheck "mtype ::PDIR/P2.TXT" bash -c "mtype -i '$rw' ::PDIR/P2.TXT | grep -q 'second file in a new directory'"
+        mcheck "no scratch files left (W1.DAT, NEWDIR, SHDIR, NOTES.TXT)" bash -c \
+            "! mdir -b -i '$rw' :: | grep -qiE 'W1.DAT|NEWDIR|SHDIR|NOTES'"
+    else
+        mcheck "persisted files removed" bash -c "! mdir -b -i '$rw' :: | grep -qiE 'PERSIST|PDIR'"
+    fi
+    mcheck "big.bin intact (mcopy, compared with the pristine image)" bash -c \
+        "cmp <(mtype -i '$rw' ::BIG.BIN) <(mtype -i '$BUILD/fatdisk.img' ::BIG.BIN)"
+    mcheck "both FAT copies identical" python3 -I -c "
+import sys,struct
+d=open(sys.argv[1],'rb').read()
+rsv,nf,fsz=struct.unpack_from('<H',d,14)[0],d[16],struct.unpack_from('<H',d,22)[0]
+a=d[rsv*512:(rsv+fsz)*512]; b=d[(rsv+fsz)*512:(rsv+2*fsz)*512]
+sys.exit(0 if nf==2 and a==b else 1)" "$rw"
 done
 
 # Release ISO: demo + screenshots + poweroff

@@ -24,8 +24,12 @@ enum vnode_type { VN_FILE = TERN_FT_FILE, VN_DIR = TERN_FT_DIR, VN_DEV = TERN_FT
 struct vnode;
 struct file;
 /* Device nodes use read/write. A VN_FILE with ops is backed by a disk file system
- * (fat.c): read is called with the VFS lock held and len clipped to v->size; it is
- * read-only (opening for writing gives -EROFS). Unlink/rename only change the tree. */
+ * (fat.c): read/write/truncate are called with the VFS lock held, read with len clipped
+ * to v->size; write updates v->size itself. Without `write` it is read-only (opening
+ * for writing gives -EROFS). A VN_DIR with ops is a disk directory: `create` is called
+ * before a new child is linked (and may set child->ops/priv; an error aborts the
+ * create), `unlink` before a child is removed. Rename into/out of/inside a disk
+ * directory gives -EXDEV. */
 struct vnode_ops {
     long (*read)(struct vnode *v, void *buf, size_t len, uint64_t off);
     long (*write)(struct vnode *v, const void *buf, size_t len, uint64_t off);
@@ -34,6 +38,9 @@ struct vnode_ops {
     void (*close)(struct vnode *v, struct file *f);
     /* optional: v is being freed; release v->priv */
     void (*release)(struct vnode *v);
+    int (*truncate)(struct vnode *v);                        /* disk files: size -> 0 */
+    int (*create)(struct vnode *dir, struct vnode *child);   /* disk directories */
+    int (*unlink)(struct vnode *dir, struct vnode *child);
     /* optional, used instead of read/write when set: the open file is passed (pipes
      * need to know which end) */
     long (*fread)(struct file *f, void *buf, size_t len);
@@ -117,12 +124,13 @@ int pipe_create(struct file **rd, struct file **wr);
 struct pipe_stats { uint64_t live, created, bytes, blocked_reads, blocked_writes, epipes; };
 void pipe_get_stats(struct pipe_stats *s);
 
-/* Read-only FAT16 from an AHCI disk, mounted at `path` (fat.c). The directory tree is
- * built in the VFS at mount time; file contents are read from the disk on demand.
+/* FAT16 from an AHCI disk, mounted at `path` (fat.c). The directory tree is built in
+ * the VFS at mount time; file contents are read from the disk on demand. Writable
+ * (Day 16): write/append/truncate, create, mkdir, unlink go straight to the disk.
  * Returns files mounted or a negative errno (-ENODEV: no FAT16 file system on it). */
 int fat_mount(int disk, const char *path);
 int fat_find_disk(void);       /* first AHCI disk with a FAT16 boot sector, or -ENODEV */
-struct fat_stats { uint64_t sector_reads, cache_hits; };
+struct fat_stats { uint64_t sector_reads, cache_hits, sector_writes, free_clusters; };
 void fat_get_stats(struct fat_stats *s);
 
 void test_vfs(void);

@@ -115,6 +115,8 @@ static const char *errstr(int e) {
     case EAGAIN: return "too many processes";
     case EMFILE: return "too many open files";
     case EROFS: return "read-only file system";
+    case ENOSPC: return "no space left";
+    case ENAMETOOLONG: return "bad name (FAT needs 8.3)";
     default: return "error";
     }
 }

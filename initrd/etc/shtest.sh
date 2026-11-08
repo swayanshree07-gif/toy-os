@@ -98,7 +98,18 @@ echo "builtin pipes done"
 ls /disk
 cat /disk/docs/deep/nest.txt
 cat /disk/docs/readme.txt | grep -c line
-echo nope > /disk/hello.txt
+echo saved on the fat disk > /disk/notes.txt
+echo second line >> /disk/notes.txt
+cat /disk/notes.txt | wc
+mkdir /disk/shdir
+cp /disk/hello.txt /disk/shdir/copy.txt
+cat /disk/shdir/copy.txt
+echo x > /disk/averylongname.txt
+mv /disk/notes.txt /disk/n2.txt
+rm /disk/shdir/copy.txt
+rm /disk/shdir
+rm /disk/notes.txt
+ls /disk
 cat /disk/hello.txt
 cp /disk/hello.txt /hcopy
 cat /hcopy

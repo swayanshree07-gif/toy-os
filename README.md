@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 15 session; plan Days 1–27 done, re-plan sessions 12–15 done)
+## Status (Day 16 session; plan Days 1–27 done, re-plan sessions 12–16 done; Days 17–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -44,14 +44,18 @@ Working:
   logged at boot; on q35 it finds the AHCI controller at 00:1f.2)
 - **AHCI SATA driver** (`kernel/drivers/ahci.c`, polled, slot 0, one bounce frame per
   port): ABAR mapped uncached, bus mastering on, ports stopped/rebased/started, IDENTIFY
-  (model, LBA48 size), `ahci_read(disk, lba, 1..8, buf)` with READ DMA EXT. Read-only
-- **Read-only FAT16 at `/disk`** (`kernel/fs/fat.c`): the first AHCI disk with a FAT16
+  (model, LBA48 size), `ahci_read`/`ahci_write(disk, lba, 1..8, buf)` with READ/WRITE DMA
+  EXT, `ahci_flush` (FLUSH CACHE EXT).
+- **Writable FAT16 at `/disk`** (`kernel/fs/fat.c`): the first AHCI disk with a FAT16
   boot sector (superfloppy, no partition table) is mounted at boot. The directory tree is
   built in the VFS, file contents are read from the disk on demand through the cluster
   chain (FAT kept in RAM, one-sector cache). 8.3 names shown in lower case, no long names.
-  Opening a disk file for writing gives `-EROFS` ("read-only file system" in tsh);
-  rm/mv only change the in-memory tree. `make run` attaches `build/fatdisk.img`, written
-  by our own `tools/mkfatdisk.py` (try `ls /disk`, `cat /disk/docs/readme.txt`)
+  Writing (Day 16) is write-through: write/append/`O_TRUNC`/holes, create, `mkdir`
+  (directories grow by clusters), `rm` of files and empty directories all update data,
+  directory entry and both FAT copies, then flush. New names must be 8.3 (tsh: "bad name
+  (FAT needs 8.3)"); `mv` on `/disk` gives `EXDEV`. `make run` attaches `build/disk.img`
+  (copied once from `build/fatdisk.img`, written by our own `tools/mkfatdisk.py`), so
+  files survive reboots; `make fresh-disk` resets it (try `echo hi > /disk/a.txt`)
 - **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
   I/O APIC (honouring MADT overrides/polarity), and the **LAPIC timer** (calibrated against
   PIT channel 2) drives the 100 Hz tick. Kernel cmdline `noapic` falls back to 8259 + PIT
@@ -150,7 +154,7 @@ Working:
   keystrokes typed through the QEMU monitor
 
 Not yet: job control beyond `&`/`fg`/`wait` (no stopping /
-`bg`), writing to disks / a writable on-disk file system, FAT long names, partitions, BIOS (non-UEFI) boot, SMP.
+`bg`), FAT long names / rename on disk, partitions, BIOS (non-UEFI) boot, SMP.
 
 ### Adding a user program
 
@@ -210,10 +214,15 @@ the serial log (`build/serial-test.log`). Each new feature adds a marker there.
 Every ESP test boot also gets `build/testdisk.img` (64 sectors from `tools/mktestdisk.py`,
 each holding its LBA and a byte pattern) as a SATA disk on AHCI port 2 (`snapshot=on`);
 the kernel reads and verifies sectors from it and checks the boot disk's MBR signature.
-They also get `build/fatdisk.img` (FAT16, `tools/mkfatdisk.py`) on port 3, which is mounted
-at `/disk`; the kernel verifies a 100000-byte file with scattered clusters in odd-sized
-chunks and after a seek, nested directories, an empty file and `-EROFS`, and
-`/etc/shtest.sh` uses `ls`/`cat`/`grep`/`cp` on it from user space.
+They also get a writable copy `build/fatdisk-rw.img` of `build/fatdisk.img` (FAT16,
+`tools/mkfatdisk.py`) on port 3, mounted at `/disk`; the kernel verifies a 100000-byte
+file with scattered clusters in odd-sized chunks and after a seek, nested directories and
+an empty file, then runs the write tests (odd-chunk writes, overwrite, hole, append,
+truncate, mkdir with 40 files, error cases, unlink all, no cluster leak), and
+`/etc/shtest.sh` writes/copies/removes files there from user space. Both positive boots
+share the copy: boot `test` leaves `persist.txt` + `pdir/p2.txt`, the host checks them
+with mtools (and that both FAT copies match and `big.bin` is intact), and boot `test-pic`
+must read them back and delete them.
 
 There are two positive test images: `test` (APIC mode) and `test-pic` (cmdline
 `test kbd noapic`, legacy 8259 + PIT); each must also match `tests/pass-<image>.txt`.

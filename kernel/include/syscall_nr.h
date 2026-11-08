@@ -84,6 +84,7 @@
 #define EBUSY   16
 #define EPIPE   32
 #define EROFS   30
+#define EXDEV   18
 #define ERANGE  34
 #define ENOMEM  12
 #define EACCES  13
