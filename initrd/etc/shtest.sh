@@ -78,4 +78,21 @@ grep -c / /bout
 pwd > /nodir/x
 echo "console is back"
 rm /bout
+# Day 13 session: builtins as pipeline stages
+cd /etc
+pwd | wc
+cd /
+child exit 66
+status | grep 6
+help | grep pipelines:
+spin 300 &
+jobs | grep running
+wait
+echo x | pwd | tee /pout | wc
+cat /pout
+rm /pout
+help | nosuchprog
+pwd | wc &
+echo b | exit 3 | wc
+echo "builtin pipes done"
 exit 5

@@ -126,6 +126,17 @@ TernOS [0-9.]+ booting
 ^3.?$
 ^tsh: /nodir/x: not found
 ^console is back
+# Day 13 session: builtins as pipeline stages
+^1 1 5.?$
+^66.?$
+^pipelines: prog1 .*pwd/status/help/jobs too
+^\[1\] running +[0-9]+ +spin 300
+^1 1 2.?$
+^/.?$
+^tsh: nosuchprog: not found
+^tsh: pwd: builtins can't run in the background
+^tsh: exit: builtins can't be used in a pipeline
+^builtin pipes done
 \[TEST\] shell script ok: exit 5
 # Day 23: interactive shell typed by the harness
 tern:/\$ echo hi from tsh
@@ -145,3 +156,4 @@ tern:/etc\$ yes \| /bin/spin 30000
 ^\[1\] done +spin 600
 tern:/etc\$ exit 3
 \[TEST\] shell ok: interactive session, exit 3
+\[TEST\] pci: [0-9]+ devices, host bridge 8086:29c0, ahci 8086:2922 at 00:1f.2

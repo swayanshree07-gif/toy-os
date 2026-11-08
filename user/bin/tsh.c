@@ -14,7 +14,11 @@
  * the next through kernel pipes (a redirection given for a stage wins over the pipe).
  * All stages share one process group (the first stage's pid), which becomes the
  * foreground group, so Ctrl-C stops the whole pipeline. The status is the last
- * stage's. Builtins can't be used in a pipeline.
+ * stage's. Day 13 session: the output-only builtins (pwd, status, help, jobs) may
+ * be pipeline stages: the program stages are spawned first, then the shell itself
+ * runs the builtin with its fds 0-2 swapped for the stage's pipe ends (dup2), so it
+ * sees the real shell state (e.g. `jobs | wc`). Builtins that change the shell
+ * (cd, exit, exec, fg, wait) are rejected in pipelines.
  * Background jobs (Day 12 session): a command line ending in `&` (a program or a
  * pipeline) starts without waiting; it stays in its own process group, so Ctrl-C does
  * not reach it, and its stdin is /dev/null unless redirected. The shell prints
@@ -117,7 +121,7 @@ static const char *errstr(int e) {
 static void help(void) {
     printf("tsh builtins: cd [dir]  pwd  exit [code]  status  help  exec prog [args]\n"
            "redirection: prog < in > out (>> appends, 2> stderr); Ctrl-C stops prog\n"
-           "pipelines: prog1 | prog2 | ...  (e.g. ls /bin | grep t | wc)\n"
+           "pipelines: prog1 | prog2 | ...  (e.g. ls /bin | grep t | wc; pwd/status/help/jobs too)\n"
            "jobs: prog &  (background)  jobs  fg [%%N]  wait\n"
            "programs in /bin: ");
     int fd = open("/bin", O_RDONLY | O_DIRECTORY);
@@ -160,7 +164,8 @@ static void report(const char *name, int st) {
 struct stage {
     char *argv[ARGS_MAX + 1];
     struct redir rd;
-    int pid;
+    int pid;                   /* 0 = builtin run by the shell, -1 = not started */
+    int bfds[3];               /* builtin stage: its fds 0-2 (-1 = the shell's own) */
 };
 
 static void program_path(const char *word, char *path, size_t max) {
@@ -231,6 +236,11 @@ static void job_wait_fg(struct job *j) {
     setfg(0);
 }
 
+static bool is_builtin(const char *w);
+static bool run_builtin(int argc, char **argv, int *code);
+static void builtin_restore(void);
+static int saved_std[3] = { -1, -1, -1 };
+
 /* Run n program stages connected by pipes and wait for all of them, or (bg) record
  * them as a background job. */
 static void run_pipeline(struct stage *sg, int n, bool bg, const char *cmd) {
@@ -238,20 +248,30 @@ static void run_pipeline(struct stage *sg, int n, bool bg, const char *cmd) {
     if (bg && !(job = job_new())) { printf("tsh: too many jobs\n"); last_status = 1; return; }
     int prev_rd = -1;             /* read end of the pipe from the previous stage */
     int pgid = 0, spawned = 0;
+    bool broken = false;
     for (int i = 0; i < n; i++) {
         sg[i].pid = -1;
+        sg[i].bfds[0] = sg[i].bfds[1] = sg[i].bfds[2] = -1;
         char path[LINE_MAX];
         char **argv = sg[i].argv;
         program_path(argv[0], path, sizeof path);
         int fds[3], pp[2] = { -1, -1 };
-        if (!open_redirs(&sg[i].rd, fds)) { last_status = 1; break; }
+        if (!open_redirs(&sg[i].rd, fds)) { last_status = 1; broken = true; break; }
         if (i + 1 < n) {
             int rc = pipe(pp);
-            if (rc < 0) { printf("tsh: pipe: %s\n", errstr(rc)); close_fds(fds); last_status = 1; break; }
+            if (rc < 0) { printf("tsh: pipe: %s\n", errstr(rc)); close_fds(fds); last_status = 1; broken = true; break; }
         }
         if (fds[0] < 0 && prev_rd >= 0) { fds[0] = prev_rd; prev_rd = -1; }
         if (fds[0] < 0 && bg) fds[0] = open("/dev/null", O_RDONLY);  /* no console input */
         if (fds[1] < 0 && pp[1] >= 0) { fds[1] = pp[1]; pp[1] = -1; }
+        if (is_builtin(argv[0])) {     /* run later by the shell itself */
+            if (fds[0] >= 0) { close(fds[0]); fds[0] = -1; }  /* builtins don't read */
+            for (int k = 0; k < 3; k++) sg[i].bfds[k] = fds[k];
+            if (prev_rd >= 0) close(prev_rd);
+            prev_rd = pp[0];
+            sg[i].pid = 0;
+            continue;
+        }
         int pid = spawn_fds(path, (const char *const *)argv, fds);
         close_fds(fds);                /* the child holds its own references */
         if (prev_rd >= 0) close(prev_rd);
@@ -260,6 +280,7 @@ static void run_pipeline(struct stage *sg, int n, bool bg, const char *cmd) {
         if (pid < 0) {
             printf("tsh: %s: %s\n", argv[0], errstr(pid));
             last_status = 127;
+            broken = true;
             break;
         }
         if (!pgid) pgid = pid;
@@ -269,6 +290,25 @@ static void run_pipeline(struct stage *sg, int n, bool bg, const char *cmd) {
         spawned++;
     }
     if (prev_rd >= 0) close(prev_rd);  /* (only left over when a stage failed) */
+    int bstatus = -1;
+    for (int i = 0; i < n; i++) {      /* builtin stages, now that their readers run */
+        if (sg[i].pid != 0) continue;
+        bool ok = !broken;           /* skip if the pipeline broke */
+        if (ok) {
+            for (int k = 0; k < 3; k++) {
+                if (sg[i].bfds[k] < 0) continue;
+                saved_std[k] = dup(k);
+                dup2(sg[i].bfds[k], k);
+            }
+            int argc = 0, dummy = 0;
+            while (sg[i].argv[argc]) argc++;
+            run_builtin(argc, sg[i].argv, &dummy);
+            builtin_restore();
+            if (i == n - 1) bstatus = last_status;
+        }
+        close_fds(sg[i].bfds);
+        sg[i].pid = -1;
+    }
     if (bg) {
         if (!spawned) { job->id = 0; return; }
         job->pgid = pgid;
@@ -286,6 +326,7 @@ static void run_pipeline(struct stage *sg, int n, bool bg, const char *cmd) {
         if (i == n - 1) last_status = st;
         report(sg[i].argv[0], st);
     }
+    if (bstatus >= 0) last_status = bstatus;
     setfg(0);
 }
 
@@ -293,6 +334,11 @@ static bool is_builtin(const char *w) {
     return !strcmp(w, "exit") || !strcmp(w, "cd") || !strcmp(w, "pwd") ||
            !strcmp(w, "status") || !strcmp(w, "help") || !strcmp(w, "jobs") ||
            !strcmp(w, "fg") || !strcmp(w, "wait") || !strcmp(w, "exec");
+}
+
+/* Builtins that only print, allowed as pipeline stages. */
+static bool pipe_builtin(const char *w) {
+    return !strcmp(w, "pwd") || !strcmp(w, "status") || !strcmp(w, "help") || !strcmp(w, "jobs");
 }
 
 /* Remove a trailing '&' (outside quotes, before any comment). True if there was one. */
@@ -383,8 +429,6 @@ static int split_pipes(char *line, char **seg, int max) {
 
 /* Builtins with redirections (Day 12 session): the shell's own fds 0-2 are saved with
  * dup, the redirection files put in their place with dup2, and restored afterwards. */
-static int saved_std[3] = { -1, -1, -1 };
-
 static bool builtin_redirect(const struct redir *rd) {
     if (!rd->in && !rd->out && !rd->err) return true;
     int fds[3];
@@ -450,8 +494,13 @@ static bool run_line(char *line, int *code) {
         argc = parse(seg[i], sg[i].argv, &sg[i].rd);
         if (argc < 0) { last_status = 2; return true; }
         if (argc == 0 && nseg > 1) { printf("tsh: empty pipeline stage\n"); last_status = 2; return true; }
-        if (nseg > 1 && is_builtin(sg[i].argv[0])) {
+        if (nseg > 1 && is_builtin(sg[i].argv[0]) && !pipe_builtin(sg[i].argv[0])) {
             printf("tsh: %s: builtins can't be used in a pipeline\n", sg[i].argv[0]);
+            last_status = 2;
+            return true;
+        }
+        if (bg && argc > 0 && is_builtin(sg[i].argv[0])) {
+            printf("tsh: %s: builtins can't run in the background\n", sg[i].argv[0]);
             last_status = 2;
             return true;
         }

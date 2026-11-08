@@ -20,6 +20,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "selftest.h"
+#include "pci.h"
 #include "heap.h"
 #include "sched.h"
 #include "ksyms.h"
@@ -239,6 +240,21 @@ static void test_irq_mode(void) {
     }
 }
 
+/* ---- Day 13 session: PCI enumeration (q35: host bridge 8086:29c0, AHCI at 00:1f.2) ---- */
+static void test_pci(void) {
+    int n = pci_count();
+    const struct pci_dev *hb = pci_find_class(0x06, 0x00, 0xFF);
+    const struct pci_dev *sata = pci_find_class(0x01, 0x06, 0x01);
+    if (n < 3 || !hb || !sata) panic("pci: %d devices, host bridge %p, ahci %p", n, hb, sata);
+    if (hb->bus || hb->dev || hb->fn) panic("pci: host bridge not at 00:00.0");
+    uint32_t id = pci_read32(sata->bus, sata->dev, sata->fn, 0);
+    if ((id & 0xFFFF) != sata->vendor || id >> 16 != sata->device) panic("pci: reread mismatch");
+    /* AHCI ABAR is BAR5, a memory BAR (bit 0 clear) */
+    if (sata->bar[5] & 1 || !(sata->bar[5] & ~0xFu)) panic("pci: ahci bar5 %x", sata->bar[5]);
+    kprintf("[TEST] pci: %d devices, host bridge %04x:%04x, ahci %04x:%04x at %02x:%02x.%x\n",
+            n, hb->vendor, hb->device, sata->vendor, sata->device, sata->bus, sata->dev, sata->fn);
+}
+
 /* ---- crash test: unbounded recursion must hit the thread's stack guard page ---- */
 static volatile uint64_t recurse_limit = ~0ull;   /* volatile: opaque to the compiler */
 static uint64_t recurse(uint64_t n) {
@@ -370,6 +386,8 @@ void kmain(uint32_t magic, uint32_t info_addr) {
     kprintf("interrupts on: %s mode, tick %u Hz from %s\n",
             irq_mode() == IRQ_MODE_APIC ? "apic" : "pic", TIMER_HZ, timer_source());
     if (g_test_mode) { test_irq_mode(); test_timer(); }
+    pci_scan();
+    if (g_test_mode) test_pci();
 
     sched_init();
     kprintf("scheduler: main thread adopted, idle thread created\n");

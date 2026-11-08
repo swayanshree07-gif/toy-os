@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 12 session; plan Days 1–27 done, re-plan sessions 12–13 mostly done)
+## Status (Day 13 session; plan Days 1–27 done, re-plan sessions 12–13 done, 14 started)
 
 ![demo](docs/demo.png)
 
@@ -40,6 +40,8 @@ Working:
 - **Synchronisation**: wait queues, IRQ-safe spinlocks, mutexes, counting semaphores
 - **ACPI** (minimal): RSDP from the Multiboot2 tag, XSDT/RSDT walk with checksums, MADT
   parsing (CPUs, I/O APICs, ISA interrupt source overrides, LAPIC address)
+- **PCI enumeration** (config mechanism #1 on ports 0xCF8/0xCFC, bridges followed, devices
+  logged at boot; on q35 it finds the AHCI controller at 00:1f.2 for the coming disk driver)
 - **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
   I/O APIC (honouring MADT overrides/polarity), and the **LAPIC timer** (calibrated against
   PIT channel 2) drives the 100 Hz tick. Kernel cmdline `noapic` falls back to 8259 + PIT
@@ -108,7 +110,9 @@ Working:
   `/bin/<name>` (or a path) and wait for it, in the foreground (Ctrl-C stops it).
   Redirections `< in`, `> out`, `>> out` (append), `2> err` (passed to the child through
   `spawn`'s fd argument; builtins get them through `dup`/`dup2`, e.g. `help > file`).
-  Pipelines `a | b | c` (up to 8 stages, one process group). **Background jobs**: a line
+  Pipelines `a | b | c` (up to 8 stages, one process group); the output-only builtins
+  `pwd`, `status`, `help`, `jobs` work as stages (run by the shell itself after the programs
+  are spawned, e.g. `jobs | grep spin`). **Background jobs**: a line
   ending in `&` starts without waiting (own process group, stdin `/dev/null`), prints
   `[N] PGID`, and `[N] done ...` is reported before a later prompt; builtins `jobs`,
   `fg [%N]` and `wait` (both wait in the foreground, so Ctrl-C stops the job).
@@ -135,8 +139,8 @@ Working:
 - Automated headless boot tests (`make test`), including negative crash tests and
   keystrokes typed through the QEMU monitor
 
-Not yet: builtins inside pipelines, job control beyond `&`/`fg`/`wait` (no stopping /
-`bg`), block devices and on-disk file systems, BIOS (non-UEFI) boot, SMP.
+Not yet: job control beyond `&`/`fg`/`wait` (no stopping /
+`bg`), a block device driver (AHCI next), on-disk file systems and on-disk file systems, BIOS (non-UEFI) boot, SMP.
 
 ### Adding a user program
 
