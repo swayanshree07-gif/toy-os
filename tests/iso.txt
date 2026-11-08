@@ -1,4 +1,8 @@
 # Release ISO booted from -cdrom (Day 27 / Day 11 session), driven by ISO_STAGES
+# The user disk (tools/fatimg.py) has 3 files; OVMF may add NvVars to it at boot -> 4.
+^fat: disk [0-9] mounted at /disk: FAT16, 8095 clusters of 512 bytes, [34] files
+^This image was built on the host by tools/fatimg.py.
+fromos.txt
 ^tern:/\$ demo 90
 ^demo: running \([0-9]+x[0-9]+\)
 ^demo: 90 frames in [0-9]+ ms \([0-9]+\.[0-9] fps\)

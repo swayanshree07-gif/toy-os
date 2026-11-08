@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 16 session; plan Days 1–27 done, re-plan sessions 12–16 done; Days 17–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 17 session; plan Days 1–27 done, re-plan sessions 12–17 done; Days 18–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -54,8 +54,14 @@ Working:
   (directories grow by clusters), `rm` of files and empty directories all update data,
   directory entry and both FAT copies, then flush. New names must be 8.3 (tsh: "bad name
   (FAT needs 8.3)"); `mv` on `/disk` gives `EXDEV`. `make run` attaches `build/disk.img`
-  (copied once from `build/fatdisk.img`, written by our own `tools/mkfatdisk.py`), so
-  files survive reboots; `make fresh-disk` resets it (try `echo hi > /disk/a.txt`)
+  (copied once from `build/userdisk.img`), so files survive reboots; `make fresh-disk`
+  resets it (try `echo hi > /disk/a.txt`)
+- **Disk image tool** `tools/fatimg.py` (Day 17, own code, no mtools): `mkfs`, `ls [-R]`,
+  `put`, `get`, `mkdir`, `rm`, `fsck` (FAT copies equal, valid chains, no cross-links,
+  sizes match chains, `.`/`..` correct, no lost clusters) on FAT16 superfloppy images.
+  `make disk` builds `build/userdisk.img` from the files under `disk/` (8.3 names).
+  Example: `python3 tools/fatimg.py get build/disk.img /notes/todo.txt`. Note that OVMF
+  stores an `NvVars` file on the first writable FAT disk it finds when booting the ISO
 - **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
   I/O APIC (honouring MADT overrides/polarity), and the **LAPIC timer** (calibrated against
   PIT channel 2) drives the 100 Hz tick. Kernel cmdline `noapic` falls back to 8259 + PIT
@@ -221,8 +227,11 @@ an empty file, then runs the write tests (odd-chunk writes, overwrite, hole, app
 truncate, mkdir with 40 files, error cases, unlink all, no cluster leak), and
 `/etc/shtest.sh` writes/copies/removes files there from user space. Both positive boots
 share the copy: boot `test` leaves `persist.txt` + `pdir/p2.txt`, the host checks them
-with mtools (and that both FAT copies match and `big.bin` is intact), and boot `test-pic`
-must read them back and delete them.
+with `tools/fatimg.py` (`get`, `ls -R`, `fsck`, and that `big.bin` is intact; fsck must
+also reject a copy with a damaged second FAT), and boot `test-pic`
+must read them back and delete them. The ISO boot gets a copy of `build/userdisk.img`
+(made by fatimg): the shell `cat`s a file from it and writes `/disk/notes/fromos.txt`,
+which the host then extracts with `fatimg get`, followed by `fatimg fsck`.
 
 There are two positive test images: `test` (APIC mode) and `test-pic` (cmdline
 `test kbd noapic`, legacy 8259 + PIT); each must also match `tests/pass-<image>.txt`.

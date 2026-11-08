@@ -1,0 +1,2 @@
+Welcome to the TernOS user disk.
+This image was built on the host by tools/fatimg.py.

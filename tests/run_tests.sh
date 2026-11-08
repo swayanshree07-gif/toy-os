@@ -30,7 +30,7 @@ KEY_STAGES=(
 
 # Release ISO session. A key "!cmd:arg" sends the monitor command "cmd arg" instead.
 ISO_STAGES=(
-    "tsh: TernOS shell|d e m o spc 9 0 ret"
+    "tsh: TernOS shell|c a t spc slash d i s k slash w e l c o m e dot t x t ret e c h o spc w r i t t e n spc b y spc t e r n o s spc shift-dot spc slash d i s k slash n o t e s slash f r o m o s dot t x t ret l s spc slash d i s k slash n o t e s ret d e m o spc 9 0 ret"
     "demo: running|!screendump:$BUILD/screen-demo.ppm"
     "demo: 90 frames|!screendump:$BUILD/screen-console.ppm"
     "demo: 90 frames|p o w e r o f f ret"
@@ -71,7 +71,9 @@ boot() {
     rm -f "$log"
     local drive
     if [ "$media" = iso ]; then
-        drive=(-cdrom "$BUILD/ternos.iso")
+        drive=(-cdrom "$BUILD/ternos.iso"
+               -drive if=none,id=ud,format=raw,file="$BUILD/userdisk-rw.img"
+               -device ide-hd,bus=ide.3,drive=ud)
     else
         # QEMU's vvfat write-back corrupts files when OVMF writes NvVars to the ESP, so
         # every boot gets a throwaway copy of the pristine build output.
@@ -118,42 +120,51 @@ boot() {
     fi
 }
 
-# FAT disk check on the host with mtools (independent of our FAT code):
+# FAT disk checks on the host with the own image tool tools/fatimg.py (Day 17; it is
+# cross-checked against mtools in PROGRESS.md, but the suite no longer needs mtools):
 # mcheck <description> <command...>
+FATIMG="python3 -I $here/../tools/fatimg.py"
 mcheck() {
     local what=$1; shift
-    if "$@" > "$BUILD/mtools.out" 2>&1; then echo "  PASS  host: $what"
-    else echo "  FAIL  host: $what"; cat "$BUILD/mtools.out"; overall=1; fi
+    if "$@" > "$BUILD/fatimg.out" 2>&1; then echo "  PASS  host: $what"
+    else echo "  FAIL  host: $what"; cat "$BUILD/fatimg.out"; overall=1; fi
 }
 # Both positive boots share one writable copy of the FAT disk (Day 16): boot "test"
-# writes persist.txt + pdir/p2.txt, the host reads them with mtools, boot "test-pic"
+# writes persist.txt + pdir/p2.txt, the host reads them with fatimg, boot "test-pic"
 # must read them back (and removes them), then the host checks they are gone.
 cp "$BUILD/fatdisk.img" "$BUILD/fatdisk-rw.img"
+rw="$BUILD/fatdisk-rw.img"
 for img in test test-pic; do
     cat "$here/expected.txt" "$here/pass-$img.txt" > "$BUILD/markers-$img.txt"
     boot "$img" 33 "$BUILD/markers-$img.txt" 0 KEY_STAGES
-    rw="$BUILD/fatdisk-rw.img"
     if [ "$img" = test ]; then
-        mcheck "mtype ::PERSIST.TXT" bash -c "mtype -i '$rw' ::PERSIST.TXT | grep -q 'read back by boot 2'"
-        mcheck "mtype ::PDIR/P2.TXT" bash -c "mtype -i '$rw' ::PDIR/P2.TXT | grep -q 'second file in a new directory'"
-        mcheck "no scratch files left (W1.DAT, NEWDIR, SHDIR, NOTES.TXT)" bash -c \
-            "! mdir -b -i '$rw' :: | grep -qiE 'W1.DAT|NEWDIR|SHDIR|NOTES'"
+        mcheck "fatimg get /persist.txt" bash -c "$FATIMG get '$rw' /persist.txt | grep -q 'read back by boot 2'"
+        mcheck "fatimg get /pdir/p2.txt" bash -c "$FATIMG get '$rw' /pdir/p2.txt | grep -q 'second file in a new directory'"
+        mcheck "no scratch files left (w1.dat, newdir, shdir, notes.txt)" bash -c \
+            "$FATIMG ls '$rw' / -R > '$BUILD/fatimg.ls' && ! grep -qiE 'w1.dat|newdir|shdir|notes' '$BUILD/fatimg.ls'"
     else
-        mcheck "persisted files removed" bash -c "! mdir -b -i '$rw' :: | grep -qiE 'PERSIST|PDIR'"
+        mcheck "persisted files removed" bash -c "$FATIMG ls '$rw' / -R > '$BUILD/fatimg.ls' && ! grep -qiE 'persist|pdir' '$BUILD/fatimg.ls'"
     fi
-    mcheck "big.bin intact (mcopy, compared with the pristine image)" bash -c \
-        "cmp <(mtype -i '$rw' ::BIG.BIN) <(mtype -i '$BUILD/fatdisk.img' ::BIG.BIN)"
-    mcheck "both FAT copies identical" python3 -I -c "
-import sys,struct
-d=open(sys.argv[1],'rb').read()
-rsv,nf,fsz=struct.unpack_from('<H',d,14)[0],d[16],struct.unpack_from('<H',d,22)[0]
-a=d[rsv*512:(rsv+fsz)*512]; b=d[(rsv+fsz)*512:(rsv+2*fsz)*512]
-sys.exit(0 if nf==2 and a==b else 1)" "$rw"
+    mcheck "big.bin intact (compared with the pristine image)" bash -c \
+        "cmp <($FATIMG get '$rw' /big.bin) <($FATIMG get '$BUILD/fatdisk.img' /big.bin)"
+    mcheck "fatimg fsck (FAT copies equal, chains, sizes, no lost clusters)" $FATIMG fsck "$rw"
 done
+# fsck must notice damage: a copy with the second FAT changed must fail.
+cp "$rw" "$BUILD/fatdisk-bad.img"
+python3 -I -c "
+import sys; f=open(sys.argv[1],'r+b'); f.seek(512+32*512+300); f.write(b'\x07\x00')" "$BUILD/fatdisk-bad.img"
+mcheck "fatimg fsck rejects a damaged FAT copy" bash -c "! $FATIMG fsck '$BUILD/fatdisk-bad.img'"
 
 # Release ISO: demo + screenshots + poweroff
 rm -f "$BUILD"/screen-demo.ppm "$BUILD"/screen-console.ppm
+# It gets a copy of the user disk made by tools/fatimg.py (make disk): the shell reads
+# a file from it and writes one, which the host then extracts with fatimg.
+cp "$BUILD/userdisk.img" "$BUILD/userdisk-rw.img"
 boot iso 0 "$here/iso.txt" 0 ISO_STAGES "poweroff:" iso
+ud="$BUILD/userdisk-rw.img"
+mcheck "fatimg get /notes/fromos.txt (written by the OS)" bash -c \
+    "[ \"\$($FATIMG get '$ud' /notes/fromos.txt)\" = 'written by ternos' ]"
+mcheck "fatimg fsck of the user disk after the OS wrote to it" $FATIMG fsck "$ud"
 # The demo screenshot must be a busy picture (gradient sky, sea, terns), the one after
 # it exits the text console again (mostly its background colour 101828).
 check_shot() {

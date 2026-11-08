@@ -1,0 +1,2 @@
+- write a line editor (ted)
+- write a small game (tide)

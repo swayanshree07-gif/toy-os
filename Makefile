@@ -22,7 +22,7 @@ KERNEL  := $(BUILD)/ternos.elf
 QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
                -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all iso run run-headless run-iso test clean fresh-disk
+.PHONY: all iso run run-headless run-iso test clean fresh-disk disk
 .SECONDARY:
 all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI $(BUILD)/ternos.iso
 
@@ -161,13 +161,21 @@ $(BUILD)/testdisk.img: tools/mktestdisk.py
 $(BUILD)/fatdisk.img: tools/mkfatdisk.py
 	@mkdir -p $(BUILD)
 	python3 tools/mkfatdisk.py $@
-$(BUILD)/disk.img: | $(BUILD)/fatdisk.img
-	cp $(BUILD)/fatdisk.img $@
-fresh-disk: $(BUILD)/fatdisk.img
-	cp $(BUILD)/fatdisk.img $(BUILD)/disk.img
+# User disk made with the own image tool tools/fatimg.py (Day 17): `make disk` (re)builds
+# build/userdisk.img from disk/ (the files you want on /disk); build/disk.img is a copy
+# that `make run` keeps between boots (`make fresh-disk` resets it).
+USERDISK_FILES := $(shell find disk -type f 2>/dev/null)
+$(BUILD)/userdisk.img: tools/fatimg.py tools/mkuserdisk.sh $(USERDISK_FILES)
+	@mkdir -p $(BUILD)
+	tools/mkuserdisk.sh $@ disk
+disk: $(BUILD)/userdisk.img
+$(BUILD)/disk.img: | $(BUILD)/userdisk.img
+	cp $(BUILD)/userdisk.img $@
+fresh-disk: $(BUILD)/userdisk.img
+	cp $(BUILD)/userdisk.img $(BUILD)/disk.img
 FATDISK := -drive if=none,id=fd,format=raw,file=$(BUILD)/disk.img -device ide-hd,bus=ide.3,drive=fd
 
-test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO) $(BUILD)/testdisk.img $(BUILD)/fatdisk.img
+test: $(foreach i,$(TEST_IMAGES),$(BUILD)/esp-$(i)/EFI/BOOT/BOOTX64.EFI) $(ISO) $(BUILD)/testdisk.img $(BUILD)/fatdisk.img $(BUILD)/userdisk.img
 	QEMU="$(QEMU)" QEMU_COMMON="$(QEMU_COMMON)" tests/run_tests.sh $(BUILD)
 
 clean:
