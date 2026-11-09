@@ -48,6 +48,10 @@ static uint64_t *walk(uint64_t pml4, uint64_t va, int leaf, bool create, uint64_
 }
 
 static bool is_current(uint64_t pml4) { return (read_cr3() & PTE_ADDR) == pml4; }
+/* Must the TLB entry for va be flushed after changing pml4's mapping? The upper half
+ * is shared by all address spaces, so it is live whatever CR3 holds (Day 23 fix: a
+ * reused kernel-stack slot hit a stale entry when a process space was loaded). */
+static bool tlb_live(uint64_t pml4, uint64_t va) { return va >= 0xffff800000000000ull || is_current(pml4); }
 
 int vmm_map(uint64_t pml4, uint64_t va, uint64_t pa, uint64_t flags) {
     kassert(!(va & (PAGE_SIZE - 1)) && !(pa & (PAGE_SIZE - 1)));
@@ -57,7 +61,7 @@ int vmm_map(uint64_t pml4, uint64_t va, uint64_t pa, uint64_t flags) {
     if (pte && (*pte & PTE_P)) err = -1;
     if (!err) {
         *pte = pa | PTE_P | (flags & ~(PTE_ADDR | PTE_PS | PTE_NX)) | (flags & nx_mask);
-        if (is_current(pml4)) invlpg(va);
+        if (tlb_live(pml4, va)) invlpg(va);
     }
     irq_restore(fl);
     return err;
@@ -71,7 +75,7 @@ bool vmm_unmap(uint64_t pml4, uint64_t va, uint64_t *old_pa) {
     if (pte && (*pte & PTE_P)) {
         if (old_pa) *old_pa = *pte & PTE_ADDR;
         *pte = 0;
-        if (is_current(pml4)) invlpg(va);
+        if (tlb_live(pml4, va)) invlpg(va);
         ok = true;
     }
     irq_restore(fl);

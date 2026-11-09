@@ -239,6 +239,28 @@ static void job_wait_fg(struct job *j) {
     setfg(0);
 }
 
+/* Day 23: programs start with fork + exec. The child moves the stage's fds to 0-2
+ * (-1 = the console, as spawn did), closes everything else (so no stray pipe write
+ * end keeps a reader from seeing EOF), joins the pipeline's process group and execs.
+ * The path is checked first so "not found" is still reported by the shell itself. */
+static int start_program(const char *path, char **argv, const int *fds, int pgid) {
+    struct tern_stat st;
+    int rc = stat(path, &st);
+    if (rc < 0) return rc;
+    int pid = fork();
+    if (pid != 0) return pid;          /* parent (or fork error) */
+    setpgid(0, pgid);
+    int nfd[3];
+    for (int k = 0; k < 3; k++) {
+        nfd[k] = fds[k] >= 0 ? dup(fds[k]) : open("/dev/console", O_RDWR);
+    }
+    for (int k = 0; k < 3; k++) { dup2(nfd[k], k); }
+    for (int k = 3; k < 16; k++) close(k);
+    rc = exec(path, (const char *const *)argv);
+    printf("tsh: %s: %s\n", argv[0], errstr(rc));
+    exit(rc == -ENOEXEC ? 126 : 127);
+}
+
 static bool is_builtin(const char *w);
 static bool run_builtin(int argc, char **argv, int *code);
 static void builtin_restore(void);
@@ -275,7 +297,7 @@ static void run_pipeline(struct stage *sg, int n, bool bg, const char *cmd) {
             sg[i].pid = 0;
             continue;
         }
-        int pid = spawn_fds(path, (const char *const *)argv, fds);
+        int pid = start_program(path, argv, fds, pgid);
         close_fds(fds);                /* the child holds its own references */
         if (prev_rd >= 0) close(prev_rd);
         if (pp[1] >= 0) close(pp[1]);

@@ -219,5 +219,11 @@ user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 7\) at rip [0-9a-f]
 ^forktest: child value 2, buffer 0 bad, wrote 16 pages -> 16 copies
 ^forktest: parent value 1, child exit 7, buffer 0 bad, pipe 'via pipe' \(8\)
 ^forktest: parent rewrote 256 pages after child exit -> 0 copies, reused
-^forktest: 20 fork/exit rounds -> frames back to start \(0\)
+^forktest: 2x100 fork/exit rounds -> frames back to start \(0, 0; kernel heap grew [0-9]+, [0-9]+ pages\)
+# Day 23: fork polish (stack COW, fork+exec, ENOMEM under memory pressure)
+^forktest: deep stack 64 frames -> sum 106, stack pages copied on write
+^forktest: fork\+exec -> 'exec from child', exit 0
+^forktest: under memory pressure 4/4 forks failed -> ENOMEM \(-12\), after munmap fork exit 5, frames ok
 ^forktest: value 3, cow fork ok
+# Day 23: tsh starts programs with fork+exec (mem shows the shell's forks; no COW sharing left over)
+^fork: [1-9][0-9]* forks, [0-9]+ pages shared, [0-9]+ copied, [0-9]+ reused, 0 frames shared now

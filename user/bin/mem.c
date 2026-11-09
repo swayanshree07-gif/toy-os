@@ -17,5 +17,8 @@ int main(void) {
            (unsigned long)si.switches, (unsigned long)si.preemptions);
     printf("pipes: %lu open, %lu created, %lu bytes moved\n", (unsigned long)si.pipes_live,
            (unsigned long)si.pipes_created, (unsigned long)si.pipe_bytes);
+    printf("fork: %lu forks, %lu pages shared, %lu copied, %lu reused, %lu frames shared now\n",
+           (unsigned long)si.forks, (unsigned long)si.cow_shared, (unsigned long)si.cow_copies,
+           (unsigned long)si.cow_reuses, (unsigned long)si.frames_shared);
     return 0;
 }

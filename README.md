@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 22 session; plan Days 1–27 done, re-plan sessions 12–22 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 23 session; plan Days 1–27 done, re-plan sessions 12–23 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -71,8 +71,11 @@ Working:
   pages become read-only + a software COW bit in both, and the first write copies the
   page (or just re-enables writing when the other owner is gone). Files, cwd, brk, mmap
   regions and the process group are inherited. `/bin/forktest` checks private values,
-  sharing via free-frame counts, exact copy counts, a pipe across fork and a 20-round leak
-  check; `sysinfo` reports forks/shared/copies/reuses.
+  sharing via free-frame counts, exact copy counts, a pipe across fork, a 2×100-round
+  leak check, COW of a 64-frame-deep stack, fork+exec, and fork failing with `-ENOMEM`
+  when memory is full; `sysinfo` (and `/bin/mem`) report forks/shared/copies/reuses.
+  Since Day 23 the shell `tsh` starts every program with fork + exec (the child moves
+  its fds to 0–2, closes the rest, joins the pipeline's process group, then execs).
 - **Anonymous mmap** (Day 21): `mmap(len, PROT_READ|PROT_WRITE)` returns a zero-filled
   region in the mmap area (from `0x100000000000`, first fit, one unmapped gap page between
   regions); pages appear on first touch. `munmap(addr, len)` is page-granular, frees the

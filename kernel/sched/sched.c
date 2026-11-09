@@ -50,13 +50,23 @@ void sched_fpu_reset_current(void) {
 }
 
 /* ---- kernel stacks: [guard page][KSTACK_PAGES pages] in the KMAP area ----
- * Virtual space is handed out by a bump pointer and never reused (64 GiB of KMAP
- * space is plenty); the frames are returned to the PMM on free. */
+ * Slots come from a bump pointer; freed slots are kept on a small free list and
+ * reused (Day 23: without reuse every ~100 threads needed a fresh page-table frame
+ * that was never returned, a slow leak found by the 2x100 fork test). The frames
+ * are returned to the PMM on free. */
 #define KSTACK_AREA (KMAP_BASE + (1ull << 30))   /* below 1 GiB is used by mm tests */
+#define KSTACK_FREE_MAX 256
 static uint64_t kstack_next = KSTACK_AREA;
+static uint64_t kstack_freelist[KSTACK_FREE_MAX];
+static unsigned kstack_nfree;
 
 static bool kstack_alloc(struct thread *t) {
-    uint64_t base = kstack_next + PAGE_SIZE;      /* skip the guard page */
+    uint64_t fl = irq_save();
+    bool reused = kstack_nfree > 0;
+    uint64_t base = reused ? kstack_freelist[--kstack_nfree]
+                           : kstack_next + PAGE_SIZE;   /* skip the guard page */
+    if (!reused) kstack_next = base + KSTACK_PAGES * PAGE_SIZE;
+    irq_restore(fl);
     for (unsigned i = 0; i < KSTACK_PAGES; i++) {
         uint64_t pa = pmm_alloc();
         if (!pa || vmm_map(vmm_kernel_pml4(), base + i * PAGE_SIZE, pa, VMM_KERNEL_RW) != 0) {
@@ -65,10 +75,12 @@ static bool kstack_alloc(struct thread *t) {
                 uint64_t old;
                 if (vmm_unmap(vmm_kernel_pml4(), base + j * PAGE_SIZE, &old)) pmm_free(old);
             }
+            fl = irq_save();
+            if (kstack_nfree < KSTACK_FREE_MAX) kstack_freelist[kstack_nfree++] = base;
+            irq_restore(fl);
             return false;
         }
     }
-    kstack_next = base + KSTACK_PAGES * PAGE_SIZE;
     t->stack_base = base;
     t->stack_top = base + KSTACK_PAGES * PAGE_SIZE;
     stats.stacks_live++;
@@ -80,6 +92,9 @@ static void kstack_free(struct thread *t) {
         uint64_t old;
         if (vmm_unmap(vmm_kernel_pml4(), va, &old)) pmm_free(old);
     }
+    uint64_t fl = irq_save();
+    if (kstack_nfree < KSTACK_FREE_MAX) kstack_freelist[kstack_nfree++] = t->stack_base;
+    irq_restore(fl);
     t->stack_base = t->stack_top = 0;
     stats.stacks_live--;
 }
