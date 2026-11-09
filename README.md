@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 19 session; plan Days 1–27 done, re-plan sessions 12–19 done; Days 20–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 20 session; plan Days 1–27 done, re-plan sessions 12–20 done; Days 21–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -66,6 +66,12 @@ Working:
   next move of a shortest solution (built-in BFS solver; every generated island is
   solvable), `m` map, `q` quit. Same seed → same island. Host build for finding scripted
   solutions: `cc -DTIDE_HOST user/bin/tide.c -o tide && ./tide 7 -solve`.
+- **Demand paging** (Day 20): `brk` only moves the break; heap pages are mapped (zeroed)
+  on first touch by the page-fault handler, and syscalls fault in lazy pages of user
+  buffers the same way. The stack starts with 4 pages and grows on demand up to 1 MiB; the
+  page below that is a guard page: hitting it kills only that process
+  (`(stack overflow: guard page)`). `/bin/lazy` shows it (`lazy guard` hits the guard);
+  `mem`'s sysinfo now also reports demand faults and the caller's mapped pages.
 - **Disk image tool** `tools/fatimg.py` (Day 17, own code, no mtools): `mkfs`, `ls [-R]`,
   `put`, `get`, `mkdir`, `rm`, `fsck` (FAT copies equal, valid chains, no cross-links,
   sizes match chains, `.`/`..` correct, no lost clusters) on FAT16 superfloppy images.
@@ -214,7 +220,7 @@ so every boot (`make run`, `make test`, `tools/screenshot.sh`) uses a throwaway 
 
 | Virtual address | Contents |
 |---|---|
-| `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space, private per process (unmapped in kernel threads): program at `0x400000`, `brk` heap right after it (max 64 MiB), 16 KiB stack below `0x7FFFFFFFE000` |
+| `0x0000000000000000`–`0x00007FFFFFFFFFFF` | user space, private per process (unmapped in kernel threads): program at `0x400000`, `brk` heap right after it (max 64 MiB, mapped on first touch), stack below `0x7FFFFFFFE000` (16 KiB mapped, grows on demand to 1 MiB, guard page under it) |
 | `0xFFFF800000000000` + phys | direct map of physical memory, 0 .. max(4 GiB, top of RAM) |
 | `0xFFFFFF0000000000` | kernel dynamic mappings (mm tests below +512 MiB; uncached device MMIO +512 MiB..+1 GiB; thread stacks from +1 GiB, each below a guard page) |
 | `0xFFFFFF1000000000` | kernel heap (up to 1 GiB, grows on demand) |

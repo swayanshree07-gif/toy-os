@@ -401,6 +401,23 @@ int proc_wait_child(int pid, int *code, bool nohang) {
     return cpid;
 }
 
+/* ---- demand paging (Day 20) ---- */
+static uint64_t demand_faults;
+uint64_t proc_demand_faults(void) { return demand_faults; }
+
+bool proc_demand_fault(uint64_t va) {
+    struct process *p = proc_current();
+    if (!p || p->exited) return false;
+    uint64_t page = ALIGN_DOWN(va, PAGE_SIZE);
+    bool heap = p->brk_base && page >= p->brk_base && page < ALIGN_UP(p->brk, PAGE_SIZE);
+    bool stack = page >= USER_STACK_TOP - USER_STACK_MAX && page < USER_STACK_TOP;
+    if (!heap && !stack) return false;
+    if (vmm_translate(p->pml4, page, NULL, NULL)) return false;   /* present: real fault */
+    if (vmm_map_user_pages(p->pml4, page, 1, PTE_W | PTE_NX)) return false;  /* no memory */
+    demand_faults++;
+    return true;
+}
+
 __attribute__((noreturn)) void proc_user_fault(struct regs *r) {
     struct process *p = proc_current();
     if (!p) panic("ring-3 exception %lu without a process", r->vector);
@@ -412,6 +429,8 @@ __attribute__((noreturn)) void proc_user_fault(struct regs *r) {
     kprintf("user fault: pid %d '%s': %s (vector %lu, error %lx) at rip %lx",
             p->pid, p->name, exception_name(r->vector), r->vector, r->error, r->rip);
     if (r->vector == 14) kprintf(" cr2 %lx", cr2);
+    if (r->vector == 14 && ALIGN_DOWN(cr2, PAGE_SIZE) == USER_STACK_GUARD)
+        kprintf(" (stack overflow: guard page)");
     kprintf(" -> killed\n");
     proc_exit(PROC_FAULT_EXIT_BASE + (int)r->vector);
 }

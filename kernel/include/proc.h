@@ -15,7 +15,12 @@
 
 #define USER_CODE_BASE   0x0000000000400000ull
 #define USER_STACK_TOP   0x00007FFFFFFFE000ull
-#define USER_STACK_PAGES 4
+#define USER_STACK_PAGES 4      /* mapped up front (argv lives there) */
+/* Day 20: demand paging. The stack may grow on demand down to USER_STACK_TOP -
+ * USER_STACK_MAX; the page below that is the guard page and is never mapped. Heap pages
+ * between brk_base and the break are mapped on first touch. */
+#define USER_STACK_MAX   (1ull << 20)
+#define USER_STACK_GUARD (USER_STACK_TOP - USER_STACK_MAX - 4096)
 #define PROC_FAULT_EXIT_BASE 128
 #define PROC_MAX_FDS     16
 
@@ -122,4 +127,8 @@ void test_fbdev(void);
 void test_tty(void);
 void test_shell(bool interactive);
 
+/* Day 20: map a zeroed page at va if it lies in the current process's heap or stack
+ * window. Returns true if the access can be retried. */
+bool proc_demand_fault(uint64_t va);
+uint64_t proc_demand_faults(void);
 #endif

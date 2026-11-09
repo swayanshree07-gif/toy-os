@@ -118,6 +118,12 @@ tide 7 < /etc/tide.moves
 echo ......xq | tide 7
 echo wwww........................ | tide 7
 tide 7 extra
+# Day 20: demand paging
+lazy
+status
+lazy guard
+status
+mem
 ls /disk
 cat /disk/hello.txt
 cp /disk/hello.txt /hcopy

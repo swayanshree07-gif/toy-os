@@ -47,6 +47,11 @@ void syscall_init(void) {
  * User pointers are validated against the current page tables; nothing can unmap them
  * while we run (single CPU, one thread per process), so plain memcpy is then safe. */
 static bool user_ok(uint64_t va, uint64_t len, bool write) {
+    /* Day 20: fault in lazy heap/stack pages first, as a user access would */
+    if (len && va < 0x0000800000000000ull && len <= 0x0000800000000000ull - va)
+        for (uint64_t pg = ALIGN_DOWN(va, PAGE_SIZE); pg < va + len; pg += PAGE_SIZE)
+            if (!vmm_translate(proc_current()->pml4, pg, NULL, NULL) && !proc_demand_fault(pg))
+                return false;              /* stop at the first hole: huge lengths are cheap */
     return vmm_user_range_ok(proc_current()->pml4, va, len, write);
 }
 
@@ -201,15 +206,9 @@ static long sys_brk(uint64_t want) {
         return (long)p->brk;
     uint64_t old_end = ALIGN_UP(p->brk, PAGE_SIZE), new_end = ALIGN_UP(want, PAGE_SIZE);
     if (new_end > old_end) {
-        if (vmm_map_user_pages(p->pml4, old_end, (new_end - old_end) / PAGE_SIZE,
-                               PTE_W | PTE_NX)) {
-            /* roll back whatever got mapped */
-            for (uint64_t va = old_end; va < new_end; va += PAGE_SIZE) {
-                uint64_t pa;
-                if (vmm_unmap(p->pml4, va, &pa)) pmm_free(pa);
-            }
-            return (long)p->brk;
-        }
+        /* Day 20: nothing is mapped now; pages appear on first touch (proc_demand_fault).
+         * Refuse growth that could never be backed by the free frames. */
+        if ((new_end - old_end) / PAGE_SIZE > pmm_free_frames()) return (long)p->brk;
     } else {
         for (uint64_t va = new_end; va < old_end; va += PAGE_SIZE) {
             uint64_t pa;
@@ -323,6 +322,8 @@ static long sys_sysinfo(uint64_t uinfo) {
     si.uptime_ms = timer_ms();
     si.frames_total = pmm_total_frames();
     si.frames_free = pmm_free_frames();
+    si.demand_faults = proc_demand_faults();
+    si.user_pages = vmm_user_pages(proc_current()->pml4);
     struct heap_stats hs;
     heap_check(&hs);
     si.heap_mapped = hs.mapped;

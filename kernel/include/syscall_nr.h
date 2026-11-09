@@ -142,6 +142,8 @@ struct tern_sysinfo {
     uint64_t switches, preemptions;          /* scheduler counters since boot */
     uint64_t vfs_nodes, vfs_bytes;           /* RAM FS nodes and file data bytes */
     uint64_t pipes_live, pipes_created, pipe_bytes;  /* Day 10 session */
+    uint64_t demand_faults;                  /* Day 20: lazy pages mapped since boot */
+    uint64_t user_pages;                     /* Day 20: pages mapped in the caller */
 };
 struct tern_fbinfo {
     uint32_t width, height;      /* pixels */

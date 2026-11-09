@@ -191,3 +191,12 @@ tern:/etc\$ exit 3
 ^tide: splash, that is water
 ^tide: DROWNED at move 5 with 0/3 shells
 ^usage: tide \[SEED\]
+# Day 20: demand paging (/bin/lazy from shtest.sh)
+^lazy: brk \+4096 KiB -> 0 new pages mapped, 0 frames used
+^lazy: touched 1024 heap pages -> 1024 new pages mapped, 0 bad
+^lazy: syscall buffer in lazy page ok
+^lazy: 128-deep recursion -> stack grew by 1[2-3][0-9] pages
+^lazy: brk shrink freed 102[4-6] frames
+^lazy: recursing until the guard page
+user fault: pid [0-9]+ 'lazy': page fault \(vector 14, error 6\) at rip [0-9a-f]+ cr2 7fffffefdf[0-9a-f]+ \(stack overflow: guard page\) -> killed
+^tsh: lazy: killed \(exception 14\)

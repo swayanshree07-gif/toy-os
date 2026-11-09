@@ -98,6 +98,11 @@ void isr_dispatch(struct regs *r) {
     }
     if (handlers[v]) { handlers[v](r); return; }
     if (v < 32) {
+        if (v == 14 && !(r->error & 1)) {           /* not present: lazy heap/stack page? */
+            uint64_t cr2;
+            __asm__ volatile("mov %%cr2, %0" : "=r"(cr2));
+            if (cr2 < 0x0000800000000000ull && proc_demand_fault(cr2)) return;
+        }
         if ((r->cs & 3) == 3) proc_user_fault(r);    /* kills the process, not the kernel */
         if ((v == 13 || v == 14) && (r->cs & 3) == 0 && extable_fixup(r)) return;
         kprintf("\n*** CPU EXCEPTION\n");
