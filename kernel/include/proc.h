@@ -21,6 +21,10 @@
  * between brk_base and the break are mapped on first touch. */
 #define USER_STACK_MAX   (1ull << 20)
 #define USER_STACK_GUARD (USER_STACK_TOP - USER_STACK_MAX - 4096)
+/* Day 21: anonymous mmap area (lazy, page-granular regions, first fit). */
+#define USER_MMAP_BASE   0x0000100000000000ull
+#define USER_MMAP_END    0x0000200000000000ull
+#define PROC_MAX_MMAPS   32
 #define PROC_FAULT_EXIT_BASE 128
 #define PROC_MAX_FDS     16
 
@@ -36,6 +40,8 @@ struct process {
     uint64_t entry, stack_top;
     uint64_t brk_base;                /* end of the loaded image (ELF programs) */
     uint64_t brk;                     /* current break, brk_base <= brk */
+    struct { uint64_t start, end; bool write; } mmaps[PROC_MAX_MMAPS];  /* sorted, end=0 unused */
+    unsigned nmmaps;
     struct file *fds[PROC_MAX_FDS];   /* 0/1/2 = /dev/console; closed at exit */
     struct vnode *cwd;                /* held; relative paths start here */
     /* Process tree (Day 21). Links are changed with interrupts off. A process spawned
@@ -130,5 +136,8 @@ void test_shell(bool interactive);
 /* Day 20: map a zeroed page at va if it lies in the current process's heap or stack
  * window. Returns true if the access can be retried. */
 bool proc_demand_fault(uint64_t va);
+/* Day 21: anonymous memory. mmap(len, prot) -> address or -errno; munmap -> 0/-errno. */
+long proc_mmap(uint64_t len, uint64_t prot);
+long proc_munmap(uint64_t addr, uint64_t len);
 uint64_t proc_demand_faults(void);
 #endif

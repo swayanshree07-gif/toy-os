@@ -200,3 +200,17 @@ tern:/etc\$ exit 3
 ^lazy: recursing until the guard page
 user fault: pid [0-9]+ 'lazy': page fault \(vector 14, error 6\) at rip [0-9a-f]+ cr2 7fffffefdf[0-9a-f]+ \(stack overflow: guard page\) -> killed
 ^tsh: lazy: killed \(exception 14\)
+# Day 21: anonymous mmap/munmap (/bin/mmap from shtest.sh)
+^mmap: 1024 KiB at 100000[0-9a-f]+ -> 0 pages mapped
+^mmap: touched 256 pages -> 256 mapped, 0 bad
+^mmap: read\(\) into lazy mmap page -> 16
+^mmap: munmap middle 64 pages -> 64 pages freed
+^mmap: outer parts intact, 0 bad
+^mmap: next small map reuses the hole
+^mmap: bad args -> -22 -22 -22
+^mmap: all unmapped -> 0 pages, frames back to start \(0\)
+^mmap: wrote 42, unmapping and touching again
+user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 6\) at rip [0-9a-f]+ cr2 100000[0-9a-f]+ -> killed
+^tsh: mmap: killed \(exception 14\)
+^mmap: read-only page reads 0, writing
+user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 7\) at rip [0-9a-f]+ cr2 100000[0-9a-f]+ -> killed

@@ -67,7 +67,10 @@
 #define SYS_dup       34    /* dup(fd) -> lowest free fd, sharing fd's open file (offset) */
 #define SYS_dup2      35    /* dup2(fd, newfd) -> newfd; newfd is closed first if open;
                                dup2(fd, fd) just checks fd */
-#define SYS_COUNT     36
+#define SYS_mmap      36    /* mmap(len, prot) -> address of a new anonymous, zero-filled,
+                                lazily mapped region (prot: 1 read, 2 write) or -errno */
+#define SYS_munmap    37    /* munmap(addr, len) -> 0; page-granular, may split regions */
+#define SYS_COUNT     38
 #define TERN_WNOHANG  1
 #define PROC_MAX_LIVE 64    /* spawn fails with -EAGAIN beyond this many processes */
 #define TERN_EXIT_INTR   130   /* killed by Ctrl-C */

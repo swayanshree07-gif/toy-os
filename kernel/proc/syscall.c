@@ -428,6 +428,8 @@ static long syscall_do(struct regs *r) {
     case SYS_stat:      return sys_path_op(r->rax, a0, a1);
     case SYS_fstat:     return sys_fstat(a0, a1);
     case SYS_brk:       return sys_brk(a0);
+    case SYS_mmap:      return proc_mmap(a0, a1);
+    case SYS_munmap:    return proc_munmap(a0, a1);
     case SYS_spawn:     return sys_spawn(a0, a1, a2);
     case SYS_wait:      return sys_wait(a0, a1, a2);
     case SYS_getppid: {

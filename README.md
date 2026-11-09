@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 20 session; plan Days 1–27 done, re-plan sessions 12–20 done; Days 21–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 21 session; plan Days 1–27 done, re-plan sessions 12–21 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -66,6 +66,11 @@ Working:
   next move of a shortest solution (built-in BFS solver; every generated island is
   solvable), `m` map, `q` quit. Same seed → same island. Host build for finding scripted
   solutions: `cc -DTIDE_HOST user/bin/tide.c -o tide && ./tide 7 -solve`.
+- **Anonymous mmap** (Day 21): `mmap(len, PROT_READ|PROT_WRITE)` returns a zero-filled
+  region in the mmap area (from `0x100000000000`, first fit, one unmapped gap page between
+  regions); pages appear on first touch. `munmap(addr, len)` is page-granular, frees the
+  frames and can split a region. Touching memory after munmap, or writing a read-only
+  mapping, kills the process (exit 142). `/bin/mmap` (`mmap after`, `mmap ro`) tests it.
 - **Demand paging** (Day 20): `brk` only moves the break; heap pages are mapped (zeroed)
   on first touch by the page-fault handler, and syscalls fault in lazy pages of user
   buffers the same way. The stack starts with 4 pages and grows on demand up to 1 MiB; the

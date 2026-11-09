@@ -123,6 +123,12 @@ lazy
 status
 lazy guard
 status
+# Day 21: anonymous mmap/munmap
+mmap
+mmap after
+status
+mmap ro
+status
 mem
 ls /disk
 cat /disk/hello.txt

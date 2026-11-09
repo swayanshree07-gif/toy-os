@@ -282,6 +282,7 @@ int proc_exec(const char *path, const char *const *argv, struct regs *r) {
     p->entry = entry;
     p->stack_top = stack_top;
     p->brk_base = p->brk = brk;
+    p->nmmaps = 0;
     sched_fpu_reset_current();
     irq_restore(f);
     vmm_destroy_space(old);
@@ -411,11 +412,77 @@ bool proc_demand_fault(uint64_t va) {
     uint64_t page = ALIGN_DOWN(va, PAGE_SIZE);
     bool heap = p->brk_base && page >= p->brk_base && page < ALIGN_UP(p->brk, PAGE_SIZE);
     bool stack = page >= USER_STACK_TOP - USER_STACK_MAX && page < USER_STACK_TOP;
-    if (!heap && !stack) return false;
+    uint64_t flags = PTE_W | PTE_NX;
+    bool anon = false;
+    for (unsigned i = 0; i < p->nmmaps && !heap && !stack; i++)
+        if (page >= p->mmaps[i].start && page < p->mmaps[i].end) {
+            anon = true;
+            if (!p->mmaps[i].write) flags = PTE_NX;
+        }
+    if (!heap && !stack && !anon) return false;
     if (vmm_translate(p->pml4, page, NULL, NULL)) return false;   /* present: real fault */
-    if (vmm_map_user_pages(p->pml4, page, 1, PTE_W | PTE_NX)) return false;  /* no memory */
+    if (vmm_map_user_pages(p->pml4, page, 1, flags)) return false;  /* no memory */
     demand_faults++;
     return true;
+}
+
+/* ---- anonymous mmap (Day 21) ---- */
+#define TERN_PROT_WRITE 2
+long proc_mmap(uint64_t len, uint64_t prot) {
+    struct process *p = proc_current();
+    if (!p || !len || len > USER_MMAP_END - USER_MMAP_BASE) return -EINVAL;
+    len = ALIGN_UP(len, PAGE_SIZE);
+    if (len / PAGE_SIZE > pmm_free_frames()) return -ENOMEM;
+    if (p->nmmaps >= PROC_MAX_MMAPS) return -ENOMEM;
+    /* first fit; one unmapped page is left between regions so overruns fault */
+    uint64_t at = USER_MMAP_BASE;
+    unsigned i = 0;
+    for (; i < p->nmmaps; i++) {
+        if (at + len + PAGE_SIZE <= p->mmaps[i].start) break;
+        at = p->mmaps[i].end + PAGE_SIZE;
+    }
+    if (at + len > USER_MMAP_END) return -ENOMEM;
+    for (unsigned j = p->nmmaps; j > i; j--) p->mmaps[j] = p->mmaps[j - 1];
+    p->mmaps[i].start = at;
+    p->mmaps[i].end = at + len;
+    p->mmaps[i].write = prot & TERN_PROT_WRITE;
+    p->nmmaps++;
+    return (long)at;
+}
+
+long proc_munmap(uint64_t addr, uint64_t len) {
+    struct process *p = proc_current();
+    if (!p || addr % PAGE_SIZE || !len || addr < USER_MMAP_BASE || addr >= USER_MMAP_END ||
+        len > USER_MMAP_END - addr)
+        return -EINVAL;
+    uint64_t end = ALIGN_UP(addr + len, PAGE_SIZE);
+    for (unsigned i = 0; i < p->nmmaps; i++) {
+        uint64_t s = p->mmaps[i].start, e = p->mmaps[i].end;
+        if (e <= addr || s >= end) continue;
+        uint64_t cs = s > addr ? s : addr, ce = e < end ? e : end;
+        for (uint64_t va = cs; va < ce; va += PAGE_SIZE) {
+            uint64_t pa;
+            if (vmm_unmap(p->pml4, va, &pa)) pmm_free(pa);
+        }
+        if (s < cs && e > ce) {                       /* hole in the middle: split */
+            if (p->nmmaps >= PROC_MAX_MMAPS) return -ENOMEM;   /* (pages already gone) */
+            for (unsigned j = p->nmmaps; j > i + 1; j--) p->mmaps[j] = p->mmaps[j - 1];
+            p->mmaps[i + 1] = p->mmaps[i];
+            p->mmaps[i].end = cs;
+            p->mmaps[i + 1].start = ce;
+            p->nmmaps++;
+            i++;
+        } else if (s < cs) {
+            p->mmaps[i].end = cs;
+        } else if (e > ce) {
+            p->mmaps[i].start = ce;
+        } else {                                      /* whole region gone */
+            for (unsigned j = i; j + 1 < p->nmmaps; j++) p->mmaps[j] = p->mmaps[j + 1];
+            p->nmmaps--;
+            i--;
+        }
+    }
+    return 0;
 }
 
 __attribute__((noreturn)) void proc_user_fault(struct regs *r) {

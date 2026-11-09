@@ -35,6 +35,11 @@ static inline void yield(void)                            { SC0(SYS_yield); }
 static inline void sleep_ms(uint64_t ms)                  { SC1(SYS_sleep_ms, ms); }
 static inline uint64_t uptime_ms(void)                    { return (uint64_t)SC0(SYS_uptime_ms); }
 static inline long brk(uintptr_t addr)                    { return SC1(SYS_brk, addr); }
+#define PROT_READ  1
+#define PROT_WRITE 2
+/* Day 21: anonymous memory; returns the address, or a negative errno (check < 0) */
+static inline long mmap(size_t len, int prot)             { return SC2(SYS_mmap, len, prot); }
+static inline int munmap(void *addr, size_t len)          { return (int)SC2(SYS_munmap, addr, len); }
 /* Day 21: processes */
 static inline int spawn(const char *path, const char *const *argv) { return (int)SC3(SYS_spawn, path, argv, 0); }
 /* fds[3]: our fd to give the child as its fd 0/1/2, or -1 for the console */
