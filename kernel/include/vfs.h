@@ -41,6 +41,8 @@ struct vnode_ops {
     int (*truncate)(struct vnode *v);                        /* disk files: size -> 0 */
     int (*create)(struct vnode *dir, struct vnode *child);   /* disk directories */
     int (*unlink)(struct vnode *dir, struct vnode *child);
+    /* disk nodes: move src's on-disk entry to directory newdir as `name` (Day 24) */
+    int (*rename)(struct vnode *src, struct vnode *newdir, const char *name);
     /* optional, used instead of read/write when set: the open file is passed (pipes
      * need to know which end) */
     long (*fread)(struct file *f, void *buf, size_t len);

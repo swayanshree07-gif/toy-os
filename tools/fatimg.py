@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """fatimg: TernOS's own FAT16 disk image tool (no mtools needed).
 
-Superfloppy FAT16 images (no partition table, 512-byte sectors, 8.3 names), the same
+Superfloppy FAT16 images (no partition table, 512-byte sectors, 8.3 names plus VFAT
+long file names since Day 24), the same
 layout the kernel's /disk driver (kernel/fs/fat.c) mounts.
 
   fatimg.py mkfs  IMG [SECTORS] [LABEL]   new empty FAT16 image (default 8192 sectors)
@@ -10,6 +11,7 @@ layout the kernel's /disk driver (kernel/fs/fat.c) mounts.
   fatimg.py get   IMG PATH [HOSTFILE]     copy a file out (to stdout if no HOSTFILE)
   fatimg.py mkdir IMG PATH                create a directory (parent must exist)
   fatimg.py rm    IMG PATH                remove a file or an empty directory
+  fatimg.py mv    IMG FROM TO             rename/move (TO's parent must exist, TO must not)
   fatimg.py fsck  IMG                     consistency check; exit 1 on any problem
 
 Paths use "/" and are case-insensitive ("/docs/readme.txt"). Exit status 0 = ok,
@@ -41,6 +43,44 @@ def name83(name):
     return up_b.ljust(8).encode() + up_e.ljust(3).encode()
 
 
+LFN_OFFS = (1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30)   # 13 UCS-2 chars per entry
+
+
+def needs_lfn(name):
+    """Long name needed unless the name is a valid 8.3 name written in lower case."""
+    try:
+        name83(name)
+    except FatError:
+        return True
+    return name != name.lower()
+
+
+def lfn_checksum(raw):
+    s = 0
+    for b in raw:
+        s = (((s & 1) << 7) + (s >> 1) + b) & 0xFF
+    return s
+
+
+def lfn_entries(name, raw):
+    """LFN slots for `name`, in on-disk order (last part first)."""
+    u = name.encode("utf-16-le")
+    chars = [u[i:i + 2] for i in range(0, len(u), 2)]
+    parts = [chars[i:i + 13] for i in range(0, len(chars), 13)]
+    ck = lfn_checksum(raw)
+    out = []
+    for k, part in enumerate(parts):
+        part = part + ([b"\0\0"] if len(part) < 13 else [])
+        part += [b"\xff\xff"] * (13 - len(part))
+        e = bytearray(32)
+        e[0] = (k + 1) | (0x40 if k == len(parts) - 1 else 0)
+        e[11], e[13] = 0x0F, ck
+        for o, c in zip(LFN_OFFS, part):
+            e[o:o + 2] = c
+        out.append(bytes(e))
+    return out[::-1]
+
+
 def pretty(raw):
     base = raw[:8].decode("latin-1").rstrip()
     ext = raw[8:11].decode("latin-1").rstrip()
@@ -53,6 +93,7 @@ class Entry:
     """One 32-byte directory entry; `where` = byte offset of it in the image."""
     def __init__(self, img, where):
         self.where = where
+        self.lname, self.lfn = None, []     # long name, offsets of its LFN slots
         (self.raw, self.attr, _, _, _, _, _, _, _, _, self.clus,
          self.size) = struct.unpack_from("<11sBBBHHHHHHHI", img, where)
 
@@ -62,7 +103,7 @@ class Entry:
 
     @property
     def name(self):
-        return pretty(self.raw)
+        return self.lname or pretty(self.raw)
 
 
 class Image:
@@ -135,17 +176,92 @@ class Image:
 
     def entries(self, clus):
         out = []
+        lfn, lslots, lck, want = {}, [], None, 0
         for off in self.dir_slots(clus):
             b = self.img[off]
             if b == 0:
                 break
             if b == 0xE5:
+                lfn, lslots, want = {}, [], 0
                 continue
             e = Entry(self.img, off)
-            if e.attr == 0x0F or e.attr & 0x08 or e.raw[:1] == b".":
-                continue           # LFN, volume label, . and ..
+            if e.attr == 0x0F:
+                seq = b & 0x1F
+                if b & 0x40:
+                    lfn, lslots, lck, want = {}, [], self.img[off + 13], seq
+                if seq != want or seq == 0 or self.img[off + 13] != lck:
+                    lfn, lslots, want = {}, [], 0
+                    continue
+                lfn[seq] = b"".join(bytes(self.img[off + o:off + o + 2]) for o in LFN_OFFS)
+                lslots.append(off)
+                want -= 1
+                continue
+            if not (e.attr & 0x08 or e.raw[:1] == b".") and lfn and want == 0 \
+                    and lck == lfn_checksum(e.raw):
+                u = b"".join(lfn[k] for k in sorted(lfn))
+                n = u.decode("utf-16-le", "replace").split("\0")[0]
+                e.lname, e.lfn = n, lslots
+            lfn, lslots, want = {}, [], 0
+            if e.attr & 0x08 or e.raw[:1] == b".":
+                continue           # volume label, . and ..
             out.append(e)
         return out
+
+    def short_for(self, clus, name):
+        """8.3 raw name for `name` in directory clus (NAME~N.EXT if a long name is needed)."""
+        if not needs_lfn(name):
+            return name83(name)
+        ok = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-~!#$%&'(){}^@")
+        base, dot, ext = name.rpartition(".")
+        if not dot or not base:
+            base, ext = name, ""
+        clean = lambda t: "".join(c for c in t.upper() if c in ok)
+        b, x = clean(base) or "FILE", clean(ext)[:3]
+        try:
+            if name83(name) and not (len(b) > 8):
+                cand = name83(name)
+                if all(e.raw != cand for e in self.entries(clus)):
+                    return cand        # valid 8.3 but mixed case: keep the plain short name
+        except FatError:
+            pass
+        used = {e.raw for e in self.entries(clus)}
+        for n in range(1, 1000):
+            t = "~%d" % n
+            raw = (b[:8 - len(t)] + t).ljust(8).encode() + x.ljust(3).encode()
+            if raw not in used:
+                return raw
+        raise FatError("no free short name for %r" % name)
+
+    def free_run(self, clus, n):
+        """n consecutive free slots (extends a subdirectory if needed)."""
+        slots = self.dir_slots(clus)
+        run = []
+        for off in slots:
+            if self.img[off] in (0, 0xE5):
+                run.append(off)
+                if len(run) == n:
+                    return run
+            else:
+                run = []
+        if clus == 0:
+            raise FatError("root directory full")
+        last = self.chain(clus)[-1]
+        c = self.alloc(1)[0]
+        self.fat[last] = c
+        return [self.coff(c) + 32 * i for i in range(n)]
+
+    def add_named(self, clus, name, attr, first, size):
+        raw = self.short_for(clus, name)
+        lf = lfn_entries(name, raw) if needs_lfn(name) else []
+        run = self.free_run(clus, len(lf) + 1)
+        for off, ent in zip(run, lf):
+            self.img[off:off + 32] = ent
+        self.write_entry(run[-1], raw, attr, first, size)
+        return run[-1]
+
+    def drop(self, e):
+        for off in e.lfn + [e.where]:
+            self.img[off] = 0xE5
 
     # ---- paths -----------------------------------------------------------------------
     @staticmethod
@@ -162,9 +278,8 @@ class Image:
         return clus
 
     def find(self, clus, name):
-        raw = name83(name)
         for e in self.entries(clus):
-            if e.raw == raw:
+            if e.name.lower() == name.lower() or pretty(e.raw) == name.lower():
                 return e
         return None
 
@@ -216,22 +331,21 @@ class Image:
         if not parts:
             raise FatError("bad path")
         parent = self.lookup_dir(parts[:-1])
-        raw = name83(parts[-1])
+        if len(parts[-1]) > 55:
+            raise FatError("name too long: %s" % parts[-1])
         e = self.find(parent, parts[-1])
         if e is not None:
             if e.is_dir:
                 raise FatError("is a directory: %s" % path)
             if e.clus:
                 self.free_chain(e.clus)
-            off = e.where
-        else:
-            off = self.new_slot(parent)
+            self.drop(e)
         n = (len(data) + self.csize - 1) // self.csize
         cl = self.alloc(n)
         for k, c in enumerate(cl):
             chunk = data[k * self.csize:(k + 1) * self.csize]
             self.img[self.coff(c):self.coff(c) + len(chunk)] = chunk
-        self.write_entry(off, raw, 0x20, cl[0] if cl else 0, len(data))
+        self.add_named(parent, parts[-1], 0x20, cl[0] if cl else 0, len(data))
 
     def mkdir(self, path):
         parts = self.split(path)
@@ -240,12 +354,12 @@ class Image:
         parent = self.lookup_dir(parts[:-1])
         if self.find(parent, parts[-1]) is not None:
             raise FatError("exists: %s" % path)
-        raw = name83(parts[-1])
-        off = self.new_slot(parent)
+        if len(parts[-1]) > 55:
+            raise FatError("name too long: %s" % parts[-1])
         c = self.alloc(1)[0]
         self.write_entry(self.coff(c), name83("."), 0x10, c, 0)
         self.write_entry(self.coff(c) + 32, name83(".."), 0x10, parent, 0)
-        self.write_entry(off, raw, 0x10, c, 0)
+        self.add_named(parent, parts[-1], 0x10, c, 0)
 
     def rm(self, path):
         parts = self.split(path)
@@ -258,7 +372,29 @@ class Image:
             raise FatError("directory not empty: %s" % path)
         if e.clus:
             self.free_chain(e.clus)
-        self.img[e.where] = 0xE5
+        self.drop(e)
+
+    def mv(self, src, dst):
+        sp, dp = self.split(src), self.split(dst)
+        if not sp or not dp:
+            raise FatError("bad path")
+        e = self.find(self.lookup_dir(sp[:-1]), sp[-1])
+        if e is None:
+            raise FatError("no such file or directory: %s" % src)
+        parent = self.lookup_dir(dp[:-1])
+        if self.find(parent, dp[-1]) is not None:
+            raise FatError("exists: %s" % dst)
+        if e.is_dir:
+            c, seen = parent, 0
+            while c and seen < 64:          # not into its own subtree
+                if c == e.clus:
+                    raise FatError("can't move a directory into itself")
+                c = Entry(self.img, self.coff(c) + 32).clus
+                seen += 1
+            self.write_entry(self.coff(e.clus) + 32, name83(".."), 0x10, parent, 0)
+        attr, clus, size = e.attr, e.clus, e.size
+        self.drop(e)
+        self.add_named(parent, dp[-1], attr, clus, size)
 
     def fsck(self):
         """Returns a list of problems (empty = consistent)."""
@@ -378,6 +514,9 @@ def main(argv):
             im.save()
         elif cmd == "rm":
             im.rm(args[0])
+            im.save()
+        elif cmd == "mv":
+            im.mv(args[0], args[1])
             im.save()
         elif cmd == "fsck":
             probs = im.fsck()

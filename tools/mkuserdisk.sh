@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mkuserdisk.sh IMG SRCDIR: new FAT16 image (tools/fatimg.py) with every file and
-# directory under SRCDIR copied in (names must be 8.3). Ends with a fatimg fsck.
+# directory under SRCDIR copied in (long names are fine: fatimg writes VFAT LFN entries). Ends with a fatimg fsck.
 set -euo pipefail
 img=$1 src=$2
 fat="python3 -I $(dirname "$0")/fatimg.py"

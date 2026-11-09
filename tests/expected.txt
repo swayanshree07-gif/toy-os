@@ -160,11 +160,13 @@ tern:/etc\$ exit 3
 \[TEST\] ahci: disk [0-9] on port 2 "QEMU HARDDISK" 64 sectors, lba 0/37/63 \+ 10..17 verified, bad requests rejected
 \[TEST\] ahci: boot disk MBR 55aa ok
 \[TEST\] fat: /disk big.bin 100000 bytes \(scattered clusters\) verified in odd chunks \+ seek, nested dirs, empty file
-\[TEST\] fat write: 20000-byte file in odd chunks \+ overwrite \+ hole, append, truncate, mkdir with 40 files \(dir grows\), 8\.3/EXDEV/ENOTEMPTY errors, all unlinked, [0-9]+ clusters free \(no leak\)
-^fat: disk [0-9] mounted at /disk: FAT16, 8095 clusters of 512 bytes, [678] files
+\[TEST\] fat write: 20000-byte file in odd chunks \+ overwrite \+ hole, append, truncate, mkdir with 40 files \(dir grows, long names\), rename/EXDEV/ENOTEMPTY errors, all unlinked, [0-9]+ clusters free \(no leak\)
+^fat: disk [0-9] mounted at /disk: FAT16, 8095 clusters of 512 bytes, ([678]|10) files
 ^nested ok
 ^2 7 34[[:space:]]*$
-^tsh: /disk/averylongname.txt: bad name \(FAT needs 8\.3\)
+^tsh: /disk/a-name-that-is-far-too-long-for-the-vfs-of-ternos-56b.txt: name too long
+# Day 24: mv within /disk (long names, a directory), listing shows the long name
+^  My Long Notes.txt +34
 ^mv: .*cross-device
 ^Hello from a FAT16 disk!
 ^  big.bin +100000

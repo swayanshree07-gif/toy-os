@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 23 session; plan Days 1–27 done, re-plan sessions 12–23 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 24 session; plan Days 1–27 done, re-plan sessions 12–24 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -49,11 +49,13 @@ Working:
 - **Writable FAT16 at `/disk`** (`kernel/fs/fat.c`): the first AHCI disk with a FAT16
   boot sector (superfloppy, no partition table) is mounted at boot. The directory tree is
   built in the VFS, file contents are read from the disk on demand through the cluster
-  chain (FAT kept in RAM, one-sector cache). 8.3 names shown in lower case, no long names.
+  chain (FAT kept in RAM, one-sector cache). 8.3 names shown in lower case; VFAT long names (Day 24) read and written.
   Writing (Day 16) is write-through: write/append/`O_TRUNC`/holes, create, `mkdir`
   (directories grow by clusters), `rm` of files and empty directories all update data,
-  directory entry and both FAT copies, then flush. New names must be 8.3 (tsh: "bad name
-  (FAT needs 8.3)"); `mv` on `/disk` gives `EXDEV`. `make run` attaches `build/disk.img`
+  directory entry and both FAT copies, then flush. Names that are not lower-case 8.3 get LFN
+  entries plus a `NAME~N.EXT` alias (Latin-1, up to 55 bytes). `mv`/`rename` works within
+  `/disk` (files and directories, `..` fixed up, replaces an existing target); only moves
+  between RAM and `/disk` give `EXDEV`. `make run` attaches `build/disk.img`
   (copied once from `build/userdisk.img`), so files survive reboots; `make fresh-disk`
   resets it (try `echo hi > /disk/a.txt`)
 - **Line editor** `/bin/ted [FILE]` (Day 18, ed-style): addresses `N`, `.`, `$`, `,`,
@@ -88,9 +90,9 @@ Working:
   (`(stack overflow: guard page)`). `/bin/lazy` shows it (`lazy guard` hits the guard);
   `mem`'s sysinfo now also reports demand faults and the caller's mapped pages.
 - **Disk image tool** `tools/fatimg.py` (Day 17, own code, no mtools): `mkfs`, `ls [-R]`,
-  `put`, `get`, `mkdir`, `rm`, `fsck` (FAT copies equal, valid chains, no cross-links,
+  `put`, `get`, `mkdir`, `rm`, `mv`, `fsck` (FAT copies equal, valid chains, no cross-links,
   sizes match chains, `.`/`..` correct, no lost clusters) on FAT16 superfloppy images.
-  `make disk` builds `build/userdisk.img` from the files under `disk/` (8.3 names).
+  `make disk` builds `build/userdisk.img` from the files under `disk/` (long names ok).
   Example: `python3 tools/fatimg.py get build/disk.img /notes/todo.txt`. Note that OVMF
   stores an `NvVars` file on the first writable FAT disk it finds when booting the ISO
 - **Local APIC + I/O APIC**: the 8259s are fully masked, ISA IRQs are routed through the
@@ -191,7 +193,7 @@ Working:
   keystrokes typed through the QEMU monitor
 
 Not yet: job control beyond `&`/`fg`/`wait` (no stopping /
-`bg`), FAT long names / rename on disk, partitions, BIOS (non-UEFI) boot, SMP.
+`bg`), partitions, BIOS (non-UEFI) boot, SMP.
 
 ### Adding a user program
 

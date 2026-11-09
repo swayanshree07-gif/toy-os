@@ -287,7 +287,12 @@ static void test_fat_write(void) {
         vfs_put(pv);
         fat_expect("/disk/persist.txt", PERSIST_TEXT);
         fat_expect("/disk/pdir/p2.txt", "second file in a new directory\n");
-        if (vfs_unlink(NULL, "/disk/pdir/p2.txt") || vfs_unlink(NULL, "/disk/pdir") ||
+        fat_expect("/disk/pdir/Long Persisted Name.txt", "renamed long name\n");
+        fat_expect("/disk/pdir/Moved Dir 2/Note In Moved Dir.md", "note\n");
+        if (vfs_unlink(NULL, "/disk/pdir/Long Persisted Name.txt") ||
+            vfs_unlink(NULL, "/disk/pdir/Moved Dir 2/Note In Moved Dir.md") ||
+            vfs_unlink(NULL, "/disk/pdir/Moved Dir 2") ||
+            vfs_unlink(NULL, "/disk/pdir/p2.txt") || vfs_unlink(NULL, "/disk/pdir") ||
             vfs_unlink(NULL, "/disk/persist.txt"))
             panic("fat: removing the persisted files");
         kprintf("[TEST] fat: files written by the previous boot read back and removed\n");
@@ -295,6 +300,13 @@ static void test_fat_write(void) {
         fat_write_file("/disk/persist.txt", 0, PERSIST_TEXT, sizeof PERSIST_TEXT - 1);
         if (vfs_mkdir(NULL, "/disk/pdir")) panic("fat: mkdir pdir");
         fat_write_file("/disk/pdir/p2.txt", 0, "second file in a new directory\n", 31);
+        /* Day 24: long names + rename (a file across directories, a whole directory) */
+        fat_write_file("/disk/tmp1.txt", 0, "renamed long name\n", 18);
+        if (vfs_rename(NULL, "/disk/tmp1.txt", "/disk/pdir/Long Persisted Name.txt"))
+            panic("fat: rename to long name");
+        if (vfs_mkdir(NULL, "/disk/Moved Dir")) panic("fat: mkdir long name");
+        fat_write_file("/disk/Moved Dir/Note In Moved Dir.md", 0, "note\n", 5);
+        if (vfs_rename(NULL, "/disk/Moved Dir", "/disk/pdir/Moved Dir 2")) panic("fat: rename dir");
         kprintf("[TEST] fat: persist.txt + pdir/p2.txt written for the next boot\n");
     }
     fat_get_stats(&st0);
@@ -340,22 +352,28 @@ static void test_fat_write(void) {
     if (vfs_mkdir(NULL, "/disk/newdir")) panic("fat: mkdir newdir");
     char name[40];
     for (int i = 0; i < 40; i++) {
-        ksnprintf(name, sizeof name, "/disk/newdir/f%d.txt", i);
+        ksnprintf(name, sizeof name, i % 2 ? "/disk/newdir/f%d.txt" : "/disk/newdir/File number %d.text", i);
         fat_write_file(name, 0, name, strlen(name));
     }
     for (int i = 0; i < 40; i++) {
-        ksnprintf(name, sizeof name, "/disk/newdir/f%d.txt", i);
+        ksnprintf(name, sizeof name, i % 2 ? "/disk/newdir/f%d.txt" : "/disk/newdir/File number %d.text", i);
         fat_expect(name, name);
     }
-    /* errors: bad 8.3 name, rename on the disk, existing file */
-    if (vfs_open(NULL, "/disk/longfilename.txt", O_WRONLY | O_CREAT, &f) != -ENAMETOOLONG ||
-        vfs_mkdir(NULL, "/disk/a.b.c") != -ENAMETOOLONG)
-        panic("fat: bad 8.3 name accepted");
-    if (vfs_rename(NULL, "/disk/hello2.txt", "/disk/hello3.txt") != -EXDEV) panic("fat: rename not EXDEV");
+    /* Day 24: long names and rename within the disk */
+    if (vfs_mkdir(NULL, "/disk/a.b.c") || vfs_unlink(NULL, "/disk/a.b.c")) panic("fat: long dir name");
+    if (vfs_open(NULL, "/disk/a name that is far too long for the vfs: 56 bytes!!!!!!!", O_WRONLY | O_CREAT, &f) != -ENAMETOOLONG)
+        panic("fat: 56-byte name accepted");
+    if (vfs_rename(NULL, "/disk/hello2.txt", "/disk/newdir/Hello Two.txt")) panic("fat: rename into dir");
+    fat_expect("/disk/newdir/Hello Two.txt", "three\n");
+    if (vfs_rename(NULL, "/disk/newdir/f1.txt", "/disk/newdir/f3.txt")) panic("fat: rename over file");
+    fat_expect("/disk/newdir/f3.txt", "/disk/newdir/f1.txt");
+    if (vfs_rename(NULL, "/disk/newdir/Hello Two.txt", "/disk/hello2.txt")) panic("fat: rename back");
+    if (vfs_rename(NULL, "/disk/hello2.txt", "/tmp-not-disk") != -EXDEV) panic("fat: rename to RAM not EXDEV");
     if (vfs_unlink(NULL, "/disk/newdir") != -ENOTEMPTY) panic("fat: rmdir non-empty");
     /* remove everything again: all clusters must come back */
     for (int i = 0; i < 40; i++) {
-        ksnprintf(name, sizeof name, "/disk/newdir/f%d.txt", i);
+        if (i == 1) continue;                               /* renamed over f3 */
+        ksnprintf(name, sizeof name, i % 2 ? "/disk/newdir/f%d.txt" : "/disk/newdir/File number %d.text", i);
         if (vfs_unlink(NULL, name)) panic("fat: unlink %s", name);
     }
     if (vfs_unlink(NULL, "/disk/newdir") || vfs_unlink(NULL, "/disk/w1.dat") ||
@@ -367,7 +385,7 @@ static void test_fat_write(void) {
         panic("fat: cluster leak: %lu free before, %lu after", st0.free_clusters, st1.free_clusters);
     fat_expect("/disk/hello.txt", "Hello from a FAT16 disk!\n");
     kprintf("[TEST] fat write: 20000-byte file in odd chunks + overwrite + hole, append, truncate, "
-            "mkdir with 40 files (dir grows), 8.3/EXDEV/ENOTEMPTY errors, all unlinked, "
+            "mkdir with 40 files (dir grows, long names), rename/EXDEV/ENOTEMPTY errors, all unlinked, "
             "%lu clusters free (no leak), %lu sector writes\n", st1.free_clusters, st1.sector_writes);
 }
 

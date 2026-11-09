@@ -221,8 +221,9 @@ int vfs_rename(struct vnode *cwd, const char *from, const char *to) {
     if (!d) goto out;
     if (src == root || !src->parent) { err = -EBUSY; goto out; }
     if (d->type != VN_DIR) { err = -ENOTDIR; goto out; }
-    if ((d->ops && d->ops->create) || (src->parent->ops && src->parent->ops->unlink)) {
-        err = -EXDEV; goto out;                     /* disk directories: no rename */
+    bool disk = (d->ops && d->ops->create) || (src->parent->ops && src->parent->ops->unlink);
+    if (disk && !(src->ops && src->ops->rename && d->ops && d->ops->rename)) {
+        err = -EXDEV; goto out;                     /* between RAM and disk: no rename */
     }
     if (src->type == VN_DIR)                        /* not into its own subtree */
         for (struct vnode *a = d; a; a = a->parent)
@@ -233,8 +234,15 @@ int vfs_rename(struct vnode *cwd, const char *from, const char *to) {
         if (old->type == VN_DIR && src->type != VN_DIR) { err = -EISDIR; goto out; }
         if (old->type != VN_DIR && src->type == VN_DIR) { err = -ENOTDIR; goto out; }
         if (old->type == VN_DIR && old->children) { err = -ENOTEMPTY; goto out; }
-        dir_unlink(d, old);
     }
+    if (disk) {                                     /* same FAT volume (Day 24) */
+        char nm[VFS_NAME_MAX + 1];
+        memcpy(nm, name, nlen); nm[nlen] = 0;
+        if (old && d->ops->unlink && (err = d->ops->unlink(d, old))) goto out;
+        if (old) { dir_unlink(d, old); old = NULL; }
+        if ((err = src->ops->rename(src, d, nm))) goto out;
+    }
+    if (old) dir_unlink(d, old);
     hold_locked(src);
     dir_unlink(src->parent, src);
     memcpy(src->name, name, nlen);

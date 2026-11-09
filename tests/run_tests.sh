@@ -140,6 +140,14 @@ for img in test test-pic; do
     if [ "$img" = test ]; then
         mcheck "fatimg get /persist.txt" bash -c "$FATIMG get '$rw' /persist.txt | grep -q 'read back by boot 2'"
         mcheck "fatimg get /pdir/p2.txt" bash -c "$FATIMG get '$rw' /pdir/p2.txt | grep -q 'second file in a new directory'"
+        mcheck "fatimg get long name renamed into pdir (Day 24)" bash -c \
+            "[ \"\$($FATIMG get '$rw' '/pdir/Long Persisted Name.txt')\" = 'renamed long name' ]"
+        mcheck "fatimg ls shows the moved long-named directory" bash -c \
+            "$FATIMG ls '$rw' /pdir -R | grep -qx 'f Moved Dir 2/Note In Moved Dir.md 5'"
+        if command -v mdir > /dev/null; then
+            mcheck "mtools agrees on the long names" bash -c \
+                "MTOOLS_SKIP_CHECK=1 mdir -i '$rw' -/ ::/pdir | grep -q 'Note In Moved Dir.md'"
+        fi
         mcheck "no scratch files left (w1.dat, newdir, shdir, notes.txt)" bash -c \
             "$FATIMG ls '$rw' / -R > '$BUILD/fatimg.ls' && ! grep -qiE 'w1.dat|newdir|shdir|notes' '$BUILD/fatimg.ls'"
     else

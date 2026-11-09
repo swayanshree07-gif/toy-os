@@ -104,11 +104,16 @@ cat /disk/notes.txt | wc
 mkdir /disk/shdir
 cp /disk/hello.txt /disk/shdir/copy.txt
 cat /disk/shdir/copy.txt
-echo x > /disk/averylongname.txt
-mv /disk/notes.txt /disk/n2.txt
-rm /disk/shdir/copy.txt
-rm /disk/shdir
-rm /disk/notes.txt
+# Day 24: long names and mv on /disk
+echo x > /disk/a-name-that-is-far-too-long-for-the-vfs-of-ternos-56b.txt
+mv /disk/hello.txt /etc/h.txt
+mv /disk/notes.txt "/disk/shdir/My Long Notes.txt"
+mv /disk/shdir "/disk/Shell Dir"
+ls "/disk/Shell Dir"
+cat "/disk/Shell Dir/My Long Notes.txt" | wc
+rm "/disk/Shell Dir/copy.txt"
+rm "/disk/Shell Dir/My Long Notes.txt"
+rm "/disk/Shell Dir"
 ted /disk/ted.txt < /etc/ted.cmds
 cat /disk/ted.txt
 ted /disk/ted.txt < /etc/ted.cmds2

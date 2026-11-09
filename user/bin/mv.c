@@ -16,7 +16,7 @@ static const char *err_name(int e) {
     case EISDIR: return "is a directory";
     case ENOTDIR: return "not a directory";
     case EBUSY: return "busy";
-    case EXDEV: return "cross-device (no rename on /disk)";
+    case EXDEV: return "cross-device (between RAM and /disk)";
     default: return "error";
     }
 }
