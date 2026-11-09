@@ -52,6 +52,10 @@ static bool user_ok(uint64_t va, uint64_t len, bool write) {
         for (uint64_t pg = ALIGN_DOWN(va, PAGE_SIZE); pg < va + len; pg += PAGE_SIZE)
             if (!vmm_translate(proc_current()->pml4, pg, NULL, NULL) && !proc_demand_fault(pg))
                 return false;              /* stop at the first hole: huge lengths are cheap */
+    /* Day 22: the kernel is about to write: break copy-on-write sharing first */
+    if (write && len && va < 0x0000800000000000ull && len <= 0x0000800000000000ull - va)
+        for (uint64_t pg = ALIGN_DOWN(va, PAGE_SIZE); pg < va + len; pg += PAGE_SIZE)
+            proc_cow_fault(pg);
     return vmm_user_range_ok(proc_current()->pml4, va, len, write);
 }
 
@@ -324,6 +328,12 @@ static long sys_sysinfo(uint64_t uinfo) {
     si.frames_free = pmm_free_frames();
     si.demand_faults = proc_demand_faults();
     si.user_pages = vmm_user_pages(proc_current()->pml4);
+    const struct vmm_cow_stats *cs = vmm_cow_stats();
+    si.forks = cs->forks;
+    si.cow_shared = cs->shared_pages;
+    si.cow_copies = cs->copies;
+    si.cow_reuses = cs->reuses;
+    si.frames_shared = pmm_shared_frames();
     struct heap_stats hs;
     heap_check(&hs);
     si.heap_mapped = hs.mapped;
@@ -460,6 +470,7 @@ static long syscall_do(struct regs *r) {
     case SYS_fbblit:    return sys_fbblit(a0);
     case SYS_poweroff:  return sys_poweroff();
     case SYS_exec:      return sys_exec(a0, a1, r);
+    case SYS_fork:      return proc_fork(r);
     case SYS_dup:       return sys_dup(a0, 0, false);
     case SYS_dup2:      return sys_dup(a0, a1, true);
     default:            return -ENOSYS;

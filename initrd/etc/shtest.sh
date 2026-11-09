@@ -129,6 +129,9 @@ mmap after
 status
 mmap ro
 status
+# Day 22: copy-on-write fork
+forktest
+status
 mem
 ls /disk
 cat /disk/hello.txt

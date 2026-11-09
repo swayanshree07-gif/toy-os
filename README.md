@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 21 session; plan Days 1–27 done, re-plan sessions 12–21 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 22 session; plan Days 1–27 done, re-plan sessions 12–22 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -66,6 +66,13 @@ Working:
   next move of a shortest solution (built-in BFS solver; every generated island is
   solvable), `m` map, `q` quit. Same seed → same island. Host build for finding scripted
   solutions: `cc -DTIDE_HOST user/bin/tide.c -o tide && ./tide 7 -solve`.
+- **Copy-on-write fork** (Day 22): `fork()` returns the child's pid / 0. The child shares
+  every user frame with the parent (per-frame reference counts in the PMM); writable
+  pages become read-only + a software COW bit in both, and the first write copies the
+  page (or just re-enables writing when the other owner is gone). Files, cwd, brk, mmap
+  regions and the process group are inherited. `/bin/forktest` checks private values,
+  sharing via free-frame counts, exact copy counts, a pipe across fork and a 20-round leak
+  check; `sysinfo` reports forks/shared/copies/reuses.
 - **Anonymous mmap** (Day 21): `mmap(len, PROT_READ|PROT_WRITE)` returns a zero-filled
   region in the mmap area (from `0x100000000000`, first fit, one unmapped gap page between
   regions); pages appear on first touch. `munmap(addr, len)` is page-granular, frees the

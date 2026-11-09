@@ -14,6 +14,11 @@ void pmm_free(uint64_t pa);            /* panics on double free / bad address */
 bool pmm_is_used(uint64_t pa);
 uint64_t pmm_free_frames(void);
 uint64_t pmm_total_frames(void);       /* frames covered by the bitmap */
+/* Day 22: shared frames (copy-on-write). pmm_ref adds an owner; pmm_free drops one and
+ * only frees the frame when the last owner lets go. */
+void pmm_ref(uint64_t pa);
+unsigned pmm_refcount(uint64_t pa);    /* owners, 0 if the frame is free */
+uint64_t pmm_shared_frames(void);      /* frames with more than one owner */
 
 /* Reserved ranges recorded at init (for tests and diagnostics). */
 struct pmm_range { uint64_t start, end; const char *what; };

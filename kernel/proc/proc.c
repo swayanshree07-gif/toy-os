@@ -15,6 +15,7 @@
 #include "gdt.h"
 
 extern __attribute__((noreturn)) void enter_user(uint64_t rip, uint64_t rsp);
+extern __attribute__((noreturn)) void return_to_user(struct regs *r);
 
 static int next_pid = 1;
 static unsigned live_procs;
@@ -128,12 +129,14 @@ static int map_stack(struct process *p) {
 }
 
 /* Give the process a thread and make it runnable. */
-static int proc_start(struct process *p) {
+static int proc_start_fn(struct process *p, thread_fn fn, void *arg);
+static int proc_start(struct process *p) { return proc_start_fn(p, user_thread_start, p); }
+static int proc_start_fn(struct process *p, thread_fn fn, void *arg) {
     /* The new thread must not run before it knows its address space. */
     uint64_t f = irq_save();
     p->pid = next_pid++;
-    p->pgid = p->pid;
-    p->thread = thread_create(p->name, user_thread_start, p);
+    if (!p->pgid) p->pgid = p->pid;     /* fork presets the parent's group */
+    p->thread = thread_create(p->name, fn, arg);
     if (!p->thread) { irq_restore(f); return -ENOMEM; }
     p->thread->proc = p;
     p->thread->cr3 = p->pml4;
@@ -584,4 +587,52 @@ unsigned proc_list(struct tern_procinfo *out, unsigned max) {
     }
     irq_restore(f);
     return n;
+}
+
+/* ---- copy-on-write fork (Day 22) ---- */
+bool proc_cow_fault(uint64_t va) {
+    struct process *p = proc_current();
+    if (!p || p->exited || !p->pml4) return false;
+    return vmm_cow_fault(p->pml4, va) == 1;
+}
+
+struct fork_start { struct process *p; struct regs r; };
+
+static void fork_child_start(void *arg) {
+    struct fork_start *fs = arg;
+    struct regs r = fs->r;              /* onto this thread's stack, then iretq from it */
+    kfree(fs);
+    proc_check_kill();
+    return_to_user(&r);
+}
+
+long proc_fork(struct regs *r) {
+    struct process *parent = proc_current();
+    if (live_procs >= PROC_MAX_LIVE) return -EAGAIN;
+    struct process *p = kzalloc(sizeof *p);
+    struct fork_start *fs = kmalloc(sizeof *fs);
+    if (!p || !fs) { kfree(p); kfree(fs); return -ENOMEM; }
+    waitq_init(&p->child_wq);
+    memcpy(p->name, parent->name, sizeof p->name);
+    p->pml4 = vmm_fork_space(parent->pml4);
+    if (!p->pml4) { kfree(p); kfree(fs); return -ENOMEM; }
+    for (int i = 0; i < PROC_MAX_FDS; i++)
+        if ((p->fds[i] = parent->fds[i])) file_hold(p->fds[i]);
+    p->cwd = parent->cwd;
+    vfs_hold(p->cwd);
+    p->entry = parent->entry;
+    p->stack_top = parent->stack_top;
+    p->brk_base = parent->brk_base;
+    p->brk = parent->brk;
+    memcpy(p->mmaps, parent->mmaps, sizeof p->mmaps);
+    p->nmmaps = parent->nmmaps;
+    live_procs++;
+    list_add(p);
+    fs->p = p;
+    fs->r = *r;
+    fs->r.rax = 0;                      /* fork() returns 0 in the child */
+    fs->r.rflags |= 0x200;
+    p->pgid = parent->pgid;
+    if (proc_start_fn(p, fork_child_start, fs)) { kfree(fs); proc_free_failed(p); return -ENOMEM; }
+    return p->pid;
 }

@@ -104,6 +104,7 @@ int main(int argc, char **argv) {
         case SYS_dup2: if (b < 3) continue; break;         /* keep /dev/null on 0-2 */
         case SYS_chdir: continue;                          /* stay in /fuzz */
         case SYS_poweroff: continue;                       /* would end the test run */
+        case SYS_fork: continue;                           /* tested by /bin/forktest */
         case SYS_fbinfo: a = to_out(a); break;
         case SYS_getcwd: case SYS_sysinfo: case SYS_proclist: case SYS_pipe:
             a = to_out(a); break;

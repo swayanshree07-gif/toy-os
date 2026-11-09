@@ -39,6 +39,33 @@ enter_user:
     xorl %r15d, %r15d
     iretq
 
+/* noreturn void return_to_user(struct regs *r): restore a full register frame (the
+ * layout syscall_entry builds) and iretq to ring 3. Used by fork's child (Day 22). */
+    .global return_to_user
+return_to_user:
+    cli
+    movq %rdi, %rsp
+    movw $(GDT_UDATA | 3), %ax
+    movw %ax, %ds
+    movw %ax, %es
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rbp
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
+    popq %rbx
+    popq %rax
+    addq $16, %rsp             /* vector, error */
+    iretq
+
     .global syscall_entry
 syscall_entry:
     movq %rsp, syscall_user_rsp(%rip)

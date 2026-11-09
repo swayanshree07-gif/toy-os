@@ -14,6 +14,10 @@
 #define MAX_RESERVED (4 + MB2_MAX_MODULES)
 
 static uint64_t *bitmap;           /* virtual (direct map) */
+/* Day 22: extra references per frame (copy-on-write sharing); 0 = one owner. Lives
+ * right after the bitmap in the same reserved block. */
+static uint16_t *extra_refs;
+static uint64_t shared_frames;     /* frames with extra_refs > 0 */
 static uint64_t nframes, nwords, free_count, hint;
 static struct pmm_range reserved[MAX_RESERVED];
 static unsigned nreserved;
@@ -58,7 +62,7 @@ void pmm_init(const struct boot_info *bi) {
         if (e->type == 1 && e->addr + e->len > top) top = e->addr + e->len;
     nframes = top >> PAGE_SHIFT;
     nwords = (nframes + 63) / 64;
-    uint64_t bitmap_bytes = ALIGN_UP(nwords * 8, PAGE_SIZE);
+    uint64_t bitmap_bytes = ALIGN_UP(nwords * 8 + nframes * sizeof(uint16_t), PAGE_SIZE);
 
     add_reserved(0, 0x100000, "low 1 MiB");
     add_reserved(virt_to_phys(__kernel_start), virt_to_phys(__kernel_end), "kernel");
@@ -86,6 +90,8 @@ void pmm_init(const struct boot_info *bi) {
     bitmap = phys_to_virt(where);
 
     memset(bitmap, 0xFF, nwords * 8);       /* all used, including padding bits */
+    extra_refs = (uint16_t *)(bitmap + nwords);
+    memset(extra_refs, 0, nframes * sizeof(uint16_t));
     free_count = 0;
     FOR_EACH_MMAP(bi, e)
         if (e->type == 1) mark_range(e->addr, e->addr + e->len, false);
@@ -128,6 +134,11 @@ void pmm_free(uint64_t pa) {
     if (overlaps_reserved(pa, pa + PAGE_SIZE)) panic("pmm_free: reserved frame %lx", pa);
     uint64_t fl = irq_save();
     if (!test_bit(f)) panic("pmm_free: double free of %lx", pa);
+    if (extra_refs[f]) {                /* shared: just drop one reference */
+        if (--extra_refs[f] == 0) shared_frames--;
+        irq_restore(fl);
+        return;
+    }
     clear_bit(f);
     free_count++;
     if ((f >> 6) < hint) hint = f >> 6;
@@ -146,3 +157,22 @@ unsigned pmm_reserved(const struct pmm_range **out) {
     *out = reserved;
     return nreserved;
 }
+
+/* ---- Day 22: reference counts for copy-on-write ---- */
+void pmm_ref(uint64_t pa) {
+    uint64_t f = pa >> PAGE_SHIFT;
+    if ((pa & (PAGE_SIZE - 1)) || f >= nframes) panic("pmm_ref: bad address %lx", pa);
+    uint64_t fl = irq_save();
+    if (!test_bit(f)) panic("pmm_ref: free frame %lx", pa);
+    if (extra_refs[f] == 0xFFFF) panic("pmm_ref: too many references to %lx", pa);
+    if (extra_refs[f]++ == 0) shared_frames++;
+    irq_restore(fl);
+}
+
+unsigned pmm_refcount(uint64_t pa) {
+    uint64_t f = pa >> PAGE_SHIFT;
+    if (f >= nframes || !test_bit(f)) return 0;
+    return 1u + extra_refs[f];
+}
+
+uint64_t pmm_shared_frames(void) { return shared_frames; }

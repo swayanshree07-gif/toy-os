@@ -214,3 +214,10 @@ user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 6\) at rip [0-9a-f]
 ^tsh: mmap: killed \(exception 14\)
 ^mmap: read-only page reads 0, writing
 user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 7\) at rip [0-9a-f]+ cr2 100000[0-9a-f]+ -> killed
+# Day 22: copy-on-write fork (/bin/forktest from shtest.sh)
+^forktest: child pid [0-9]+ ppid [0-9]+, fork shared [0-9]+ pages using [0-9]+ frames \(shared\)
+^forktest: child value 2, buffer 0 bad, wrote 16 pages -> 16 copies
+^forktest: parent value 1, child exit 7, buffer 0 bad, pipe 'via pipe' \(8\)
+^forktest: parent rewrote 256 pages after child exit -> 0 copies, reused
+^forktest: 20 fork/exit rounds -> frames back to start \(0\)
+^forktest: value 3, cow fork ok

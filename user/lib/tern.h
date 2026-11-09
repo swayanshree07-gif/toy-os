@@ -39,6 +39,7 @@ static inline long brk(uintptr_t addr)                    { return SC1(SYS_brk, 
 #define PROT_WRITE 2
 /* Day 21: anonymous memory; returns the address, or a negative errno (check < 0) */
 static inline long mmap(size_t len, int prot)             { return SC2(SYS_mmap, len, prot); }
+static inline int fork(void)                              { return (int)SC0(SYS_fork); }
 static inline int munmap(void *addr, size_t len)          { return (int)SC2(SYS_munmap, addr, len); }
 /* Day 21: processes */
 static inline int spawn(const char *path, const char *const *argv) { return (int)SC3(SYS_spawn, path, argv, 0); }

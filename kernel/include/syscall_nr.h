@@ -70,7 +70,11 @@
 #define SYS_mmap      36    /* mmap(len, prot) -> address of a new anonymous, zero-filled,
                                 lazily mapped region (prot: 1 read, 2 write) or -errno */
 #define SYS_munmap    37    /* munmap(addr, len) -> 0; page-granular, may split regions */
-#define SYS_COUNT     38
+#define SYS_fork      38    /* fork() -> child pid in the parent, 0 in the child. The child
+                               gets a copy-on-write copy of the address space, the same
+                               open files (shared offsets), cwd, brk, mmap regions and
+                               process group; fresh FPU state */
+#define SYS_COUNT     39
 #define TERN_WNOHANG  1
 #define PROC_MAX_LIVE 64    /* spawn fails with -EAGAIN beyond this many processes */
 #define TERN_EXIT_INTR   130   /* killed by Ctrl-C */
@@ -147,6 +151,9 @@ struct tern_sysinfo {
     uint64_t pipes_live, pipes_created, pipe_bytes;  /* Day 10 session */
     uint64_t demand_faults;                  /* Day 20: lazy pages mapped since boot */
     uint64_t user_pages;                     /* Day 20: pages mapped in the caller */
+    uint64_t forks, cow_shared;              /* Day 22: forks, pages shared by them */
+    uint64_t cow_copies, cow_reuses;         /* COW faults that copied / just re-enabled W */
+    uint64_t frames_shared;                  /* frames with more than one owner now */
 };
 struct tern_fbinfo {
     uint32_t width, height;      /* pixels */

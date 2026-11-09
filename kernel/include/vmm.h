@@ -14,6 +14,7 @@
 #define PTE_D    (1ull << 6)
 #define PTE_PS   (1ull << 7)
 #define PTE_G    (1ull << 8)
+#define PTE_COW  (1ull << 9)     /* software bit: read-only because shared after fork */
 #define PTE_NX   (1ull << 63)
 #define PTE_ADDR 0x000FFFFFFFFFF000ull
 
@@ -50,6 +51,17 @@ int vmm_map_user_pages(uint64_t pml4, uint64_t va, uint64_t pages, uint64_t flag
 bool vmm_user_range_ok(uint64_t pml4, uint64_t va, uint64_t len, bool write);
 /* Number of pages mapped in the lower half (for tests/diagnostics). */
 uint64_t vmm_user_pages(uint64_t pml4);
+
+/* ---- copy-on-write (Day 22) ----
+ * Clone the lower half of pml4: every present user page is shared (frame reference
+ * +1); writable pages become read-only + PTE_COW in both spaces. Returns the new PML4
+ * or 0 if out of memory (nothing leaks; the parent keeps working). */
+uint64_t vmm_fork_space(uint64_t pml4);
+/* Resolve a write to a PTE_COW page: copy the frame (or just make it writable again
+ * if this space is its last owner). 1 handled, 0 not a COW page, -1 out of memory. */
+int vmm_cow_fault(uint64_t pml4, uint64_t va);
+struct vmm_cow_stats { uint64_t forks, shared_pages, copies, reuses; };
+const struct vmm_cow_stats *vmm_cow_stats(void);
 
 static inline void write_cr3(uint64_t v) {
     __asm__ volatile("mov %0, %%cr3" : : "r"(v) : "memory");

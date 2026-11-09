@@ -14,6 +14,7 @@
 #include "kernel.h"
 #include "kprintf.h"
 #include "idt.h"
+#include "string.h"
 
 static uint64_t kernel_pml4;
 static uint64_t nx_mask;           /* PTE_NX if the CPU supports it, else 0 */
@@ -242,4 +243,72 @@ uint64_t vmm_user_pages(uint64_t pml4) {
     for (int i = 0; i < 256; i++)
         if (t[i] & PTE_P) n += count_table(t[i] & PTE_ADDR, 2);
     return n;
+}
+
+/* ---- copy-on-write fork (Day 22) ---- */
+static struct vmm_cow_stats cow_stats;
+const struct vmm_cow_stats *vmm_cow_stats(void) { return &cow_stats; }
+
+static int fork_table(uint64_t *t, int level, uint64_t base, uint64_t child) {
+    for (int i = 0; i < 512; i++) {
+        if (!(t[i] & PTE_P)) continue;
+        uint64_t va = base + ((uint64_t)i << (PAGE_SHIFT + 9 * level));
+        if (level > 0) {
+            int rc = fork_table(table_of(t[i]), level - 1, va, child);
+            if (rc) return rc;
+            continue;
+        }
+        if (t[i] & PTE_W) t[i] = (t[i] & ~PTE_W) | PTE_COW;
+        uint64_t pa = t[i] & PTE_ADDR;
+        uint64_t fl = t[i] & (PTE_U | PTE_COW | PTE_NX);
+        int rc = vmm_map(child, va, pa, fl);
+        if (rc) return rc;
+        pmm_ref(pa);
+        cow_stats.shared_pages++;
+    }
+    return 0;
+}
+
+uint64_t vmm_fork_space(uint64_t pml4) {
+    uint64_t child = vmm_new_space();
+    if (!child) return 0;
+    uint64_t fl = irq_save();
+    uint64_t *t = phys_to_virt(pml4);
+    int rc = 0;
+    for (int i = 0; i < 256 && !rc; i++)
+        if (t[i] & PTE_P) rc = fork_table(table_of(t[i]), 2, (uint64_t)i << 39, child);
+    if (is_current(pml4)) write_cr3(read_cr3());      /* parent lost PTE_W: flush */
+    irq_restore(fl);
+    if (rc) { vmm_destroy_space(child); return 0; }
+    cow_stats.forks++;
+    return child;
+}
+
+int vmm_cow_fault(uint64_t pml4, uint64_t va) {
+    if (va >= USER_TOP) return 0;
+    va = va & ~(uint64_t)(PAGE_SIZE - 1);
+    int err = 0, rc = 0;
+    uint64_t fl = irq_save();
+    uint64_t *pte = walk(pml4, va, 0, false, 0, &err);
+    if (pte && (*pte & PTE_P) && (*pte & PTE_COW)) {
+        uint64_t old = *pte & PTE_ADDR;
+        if (pmm_refcount(old) == 1) {             /* the others are gone: keep it */
+            *pte = (*pte | PTE_W) & ~PTE_COW;
+            cow_stats.reuses++;
+            rc = 1;
+        } else {
+            uint64_t pa = pmm_alloc();
+            if (!pa) rc = -1;
+            else {
+                memcpy(phys_to_virt(pa), phys_to_virt(old), PAGE_SIZE);
+                *pte = pa | ((*pte & ~PTE_ADDR & ~PTE_COW) | PTE_W);
+                pmm_free(old);                    /* drops our reference only */
+                cow_stats.copies++;
+                rc = 1;
+            }
+        }
+        if (rc == 1 && is_current(pml4)) invlpg(va);
+    }
+    irq_restore(fl);
+    return rc;
 }

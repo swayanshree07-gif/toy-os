@@ -140,4 +140,8 @@ bool proc_demand_fault(uint64_t va);
 long proc_mmap(uint64_t len, uint64_t prot);
 long proc_munmap(uint64_t addr, uint64_t len);
 uint64_t proc_demand_faults(void);
+/* Day 22: copy-on-write fork. proc_fork(r) clones the caller (r = its syscall frame);
+ * proc_cow_fault resolves a write to a shared page of the current process. */
+long proc_fork(struct regs *r);
+bool proc_cow_fault(uint64_t va);
 #endif
