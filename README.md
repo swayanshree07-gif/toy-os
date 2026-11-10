@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 28 session; plan Days 1–28 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 29 session; plan Days 1–29 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -210,6 +210,11 @@ Not yet: job control beyond `&`/`fg`/`wait` (no stopping /
 
 ### Adding a user program
 
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the architecture overview, memory
+map, system call table and step-by-step guides for adding a program or a system call
+(`make docs-check` verifies the tables against the sources; `make test` runs it first).
+
+
 Drop `user/bin/<name>.c` (with `#include "tern.h"` and a `main(int argc, char **argv)`) into
 the tree; `make` compiles it, links it with `user/lib` at 0x400000 and packs it into the
 initrd as `/bin/<name>`. Floating point / SSE may be used (state is saved per thread);
@@ -357,8 +362,8 @@ kernel/multiboot2.c   boot information parser
 boot/grub.cfg         GRUB config template (@CMDLINE@ filled in by make)
 initrd/               files packed into the initrd image (etc/motd, etc/shtest.sh, etc/exectest.sh)
 user/                 user space: linker.ld, lib/ (crt0, tern.h, ulib.c, malloc.c), bin/ (programs)
-tools/                font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot
+tools/                checkdocs.py (docs vs. code check), font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot
                       script, ppmstat.py (screenshot checks)
-docs/                 screenshots
+docs/                 ARCHITECTURE.md (design, memory map, syscalls, how-tos), screenshots
 tests/                headless test runner and expected markers
 ```
