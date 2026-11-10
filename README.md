@@ -3,11 +3,15 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 29 session; plan Days 1–29 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 30, project complete: plan Days 1–30 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
 *`/bin/demo` ("tern flight") running from the boot ISO, captured with QEMU's `screendump` by `make test`.*
+
+![shell session](docs/demo-console.png)
+
+*A shell session typed by `make demo` (files on the FAT16 disk, a pipe, `ps`, `df`, `uptime`).*
 
 Working:
 - Boots through OVMF (UEFI) → GRUB 2 (x86_64-efi) → **Multiboot2** → 32-bit stub → **long mode**
@@ -235,6 +239,8 @@ make run      # boots in a QEMU window, serial on the terminal; the shell starts
 make run-iso  # same, but boots build/ternos.iso as a CD-ROM (try `demo`, then `poweroff`)
 make run-headless   # no window, serial on stdout (type shell commands there), killed after 60 s
 make test     # headless boot with the "test" cmdline, checks serial markers
+make demo     # scripted headless demo: boot ISO -> shell session -> /bin/demo -> poweroff,
+              # PNG screenshots in build/demo/, serial markers + host fsck checked (~20 s)
 make help     # lists all targets
 ```
 

@@ -22,7 +22,7 @@ KERNEL  := $(BUILD)/ternos.elf
 QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
                -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all iso run run-headless run-iso test clean fresh-disk disk help docs-check
+.PHONY: demo all iso run run-headless run-iso test clean fresh-disk disk help docs-check
 .SECONDARY:
 all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI $(BUILD)/ternos.iso
 
@@ -175,6 +175,9 @@ fresh-disk: $(BUILD)/userdisk.img
 	cp $(BUILD)/userdisk.img $(BUILD)/disk.img
 FATDISK := -drive if=none,id=fd,format=raw,file=$(BUILD)/disk.img -device ide-hd,bus=ide.3,drive=fd
 
+demo: all $(BUILD)/userdisk.img
+	tools/demo.sh $(BUILD)
+
 docs-check:
 	python3 tools/checkdocs.py
 
@@ -193,6 +196,7 @@ help:
 	@echo "  make run-headless boot without a window (serial only, 60 s timeout)"
 	@echo "  make run-iso      boot the GRUB ISO instead of the ESP directory"
 	@echo "  make test         full headless test suite (serial markers, < 120 s)"
+	@echo "  make demo         scripted headless demo session, screenshots in build/demo/"
 	@echo "  make docs-check   check docs/ARCHITECTURE.md against the sources"
 	@echo "  make fresh-disk   reset build/disk.img to the initial FAT16 image"
 	@echo "  make clean        remove build/"
