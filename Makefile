@@ -9,7 +9,7 @@ QEMU    ?= qemu-system-x86_64
 CFLAGS  := --target=x86_64-elf -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
            -fno-builtin -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mcmodel=kernel -mno-80387 \
            -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -fno-optimize-sibling-calls \
-           -O2 -g -Wall -Wextra -Werror -Ikernel/include
+           -O2 -g -Wall -Wextra -Wmissing-prototypes -Wunused-macros -Wshadow -Wstrict-prototypes -Werror -Ikernel/include
 ASFLAGS := --target=x86_64-elf -g -Ikernel/include
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000 -T kernel/linker.ld
 
@@ -22,7 +22,7 @@ KERNEL  := $(BUILD)/ternos.elf
 QEMU_COMMON := -machine q35 -m 256M -bios $(OVMF) -net none -no-reboot \
                -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
-.PHONY: all iso run run-headless run-iso test clean fresh-disk disk
+.PHONY: all iso run run-headless run-iso test clean fresh-disk disk help
 .SECONDARY:
 all: $(KERNEL) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI $(BUILD)/ternos.iso
 
@@ -86,7 +86,7 @@ $(BUILD)/grub-%.cfg: boot/grub.cfg Makefile
 # scheduler saves and restores FPU state per user thread (fxsave/fxrstor).
 UCFLAGS := --target=x86_64-elf -std=c11 -ffreestanding -fno-stack-protector -fno-pic \
            -fno-pie -fno-builtin -fno-omit-frame-pointer \
-           -O2 -g -Wall -Wextra -Werror -Iuser/lib -Ikernel/include
+           -O2 -g -Wall -Wextra -Wmissing-prototypes -Wshadow -Wstrict-prototypes -Wimplicit-fallthrough -Werror -Iuser/lib -Ikernel/include
 ULIB_OBJS := $(BUILD)/user/lib/crt0.S.o $(BUILD)/user/lib/ulib.c.o $(BUILD)/user/lib/malloc.c.o
 USER_PROGS := $(patsubst user/bin/%.c,%,$(wildcard user/bin/*.c))
 USER_BINS := $(patsubst %,$(BUILD)/user/bin/%,$(USER_PROGS))
@@ -182,3 +182,13 @@ clean:
 	rm -rf $(BUILD)
 
 -include $(OBJS:.o=.d) $(ULIB_OBJS:.o=.d) $(USER_BINS:=.c.d)
+
+help:
+	@echo "TernOS make targets:"
+	@echo "  make              build kernel, UEFI boot dir and ISO into build/"
+	@echo "  make run          boot in QEMU (window + serial on stdio, persistent build/disk.img)"
+	@echo "  make run-headless boot without a window (serial only, 60 s timeout)"
+	@echo "  make run-iso      boot the GRUB ISO instead of the ESP directory"
+	@echo "  make test         full headless test suite (serial markers, < 120 s)"
+	@echo "  make fresh-disk   reset build/disk.img to the initial FAT16 image"
+	@echo "  make clean        remove build/"

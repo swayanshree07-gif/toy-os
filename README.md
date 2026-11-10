@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 27 session; plan Days 1–27 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 28 session; plan Days 1–28 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -230,6 +230,14 @@ make run      # boots in a QEMU window, serial on the terminal; the shell starts
 make run-iso  # same, but boots build/ternos.iso as a CD-ROM (try `demo`, then `poweroff`)
 make run-headless   # no window, serial on stdout (type shell commands there), killed after 60 s
 make test     # headless boot with the "test" cmdline, checks serial markers
+make help     # lists all targets
+```
+
+The kernel and user programs build with `-Wall -Wextra -Wshadow -Wstrict-prototypes
+-Wmissing-prototypes -Werror` (kernel also `-Wunused-macros`); C functions called only from
+assembly are declared in `kernel/include/entry.h`.
+
+```sh
 tools/screenshot.sh [out.png]   # boots headless and saves a PNG of the screen
 ```
 

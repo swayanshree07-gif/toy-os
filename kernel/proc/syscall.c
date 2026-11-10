@@ -1,4 +1,5 @@
 /* System calls: `syscall`/`sysret` setup and the dispatcher (entry stub in usermode.S). */
+#include "entry.h"
 #include "proc.h"
 #include "syscall_nr.h"
 #include "sched.h"

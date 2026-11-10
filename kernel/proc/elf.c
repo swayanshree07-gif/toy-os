@@ -18,7 +18,6 @@
 #define PT_LOAD 1
 #define PF_X 1
 #define PF_W 2
-#define PF_R 4
 #define ELF_MAX_PHDRS 16
 /* Program images must end well below the stack. */
 #define USER_LOAD_TOP 0x0000100000000000ull

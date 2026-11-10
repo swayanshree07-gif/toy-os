@@ -1,4 +1,5 @@
 /* Interrupt Descriptor Table, exception reporting and handler dispatch. */
+#include "entry.h"
 #include "idt.h"
 #include "gdt.h"
 #include "kernel.h"

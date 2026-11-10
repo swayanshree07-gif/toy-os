@@ -1,4 +1,5 @@
 /* Kernel threads, context switching and the round-robin scheduler. */
+#include "entry.h"
 #include "sched.h"
 #include "mm.h"
 #include "pmm.h"

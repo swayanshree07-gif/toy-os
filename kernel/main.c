@@ -1,5 +1,6 @@
 /* TernOS kernel entry point. */
 #include <stdint.h>
+#include "entry.h"
 #include "kernel.h"
 #include "io.h"
 #include "serial.h"
