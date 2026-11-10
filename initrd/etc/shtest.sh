@@ -153,6 +153,9 @@ hexdump -s 4 -n 4 /disk/hello.txt
 hexdump /dev/zero -n 64
 # Day 26: FS stress vs. a RAM model, full disk (ENOSPC)
 fsstress 600 26
+# Day 27: fault isolation during disk I/O (kill / segv with open fds / EFAULT)
+diskfault
+status
 status
 df /disk
 ls -l /disk

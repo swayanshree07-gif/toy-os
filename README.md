@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 26 session; plan Days 1–27 done, re-plan sessions 12–26 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 27 session; plan Days 1–27 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -136,6 +136,11 @@ Working:
   append/unlink/rename/read on `/disk` against a RAM model, fills the disk until
   `write` returns `-ENOSPC`, and checks every cluster comes back; the host then runs
   `fatimg fsck` on the image
+- **Fault isolation on disk I/O** (Day 27): `diskfault` kills a child in the middle of
+  FAT writes (file keeps only whole, intact chunks), lets a child segfault with three
+  open `/disk` files (files complete, fds closed by the kernel), writes from a
+  half-unmapped buffer (`-EFAULT`, nothing written, process survives) and checks no
+  cluster is lost; the host `fatimg fsck` follows
 - **exec** (`exec(path, argv)`): replaces the program of the calling process in place
   (same pid, parent, children, process group, fds and cwd). The new image is built in a
   fresh address space first, so a failed exec returns with nothing changed; the FPU state
@@ -258,6 +263,8 @@ line. In test mode the kernel runs its self-checks, prints `[TEST] ...` markers 
 exits QEMU through the `isa-debug-exit` device (status 33 = pass, 35 = panic/fail). The script
 `tests/run_tests.sh` checks the exit status and every regex in `tests/expected.txt` against
 the serial log (`build/serial-test.log`). Each new feature adds a marker there.
+It prints the time of every boot and a `TOTAL TIME` line, and fails if the whole suite
+takes more than 120 s (about 72 s on the dev machine).
 Every ESP test boot also gets `build/testdisk.img` (64 sectors from `tools/mktestdisk.py`,
 each holding its LBA and a byte pattern) as a SATA disk on AHCI port 2 (`snapshot=on`);
 the kernel reads and verifies sectors from it and checks the boot disk's MBR signature.

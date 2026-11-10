@@ -12,6 +12,7 @@ set -u
 BUILD=${1:-build}
 here=$(cd "$(dirname "$0")" && pwd)
 overall=0
+t_start=$(date +%s.%N)
 
 # Keys typed into the guest (QEMU "sendkey" names), in stages: each stage waits for its
 # prompt in the serial log, then types its keys.
@@ -68,6 +69,7 @@ boot() {
     local media=${7:-esp}
     local log="$BUILD/serial-$img.log" fail=0
     echo "== $img"
+    local t0=$(date +%s.%N)
     rm -f "$log"
     local drive
     if [ "$media" = iso ]; then
@@ -98,6 +100,7 @@ boot() {
             -display none -serial file:"$log" -monitor none
         status=$?
     fi
+    printf '  time  %s: %.1f s\n' "$img" "$(echo "$(date +%s.%N) - $t0" | bc)"
     case $status in
         "$want") echo "  PASS  qemu exit status $status" ;;
         124) echo "  FAIL  TIMEOUT after 60 s"; fail=1 ;;
@@ -194,5 +197,8 @@ for f in "$here"/crash-*.txt; do
     boot "$name" 35 "$f" 1
 done
 
+total=$(echo "$(date +%s.%N) - $t_start" | bc)
+printf 'TOTAL TIME %.1f s (budget 120 s)\n' "$total"
+if [ "$(echo "$total > 120" | bc)" = 1 ]; then echo "  FAIL  suite slower than 120 s"; overall=1; fi
 if [ $overall -ne 0 ]; then echo "TEST FAILED"; exit 1; fi
 echo "ALL TESTS PASSED"
