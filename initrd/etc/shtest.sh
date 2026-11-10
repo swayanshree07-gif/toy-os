@@ -151,6 +151,10 @@ echo hello, ternos | hexdump
 hexdump -n 20 /bin/echo
 hexdump -s 4 -n 4 /disk/hello.txt
 hexdump /dev/zero -n 64
+# Day 26: FS stress vs. a RAM model, full disk (ENOSPC)
+fsstress 600 26
+status
+df /disk
 ls -l /disk
 ls -l /etc/motd
 ls /disk

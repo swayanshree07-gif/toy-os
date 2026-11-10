@@ -249,3 +249,8 @@ user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 7\) at rip [0-9a-f]
 ^d +[0-9]+ +[0-9]+  docs/[[:space:]]*$
 ^total [0-9]+ entries, [0-9]+ bytes
 ^- +[0-9]+ +59  /etc/motd[[:space:]]*$
+# Day 26: /bin/fsstress on /disk (host fsck of the image follows in run_tests.sh)
+^fsstress: 600 ops \(create [0-9]+, write [0-9]+, append [0-9]+, unlink [0-9]+, rename [0-9]+, check [0-9]+\), 0 mismatches
+^fsstress: disk full after [0-9]+ KiB -> write -28 \(ENOSPC ok\), size ok, [0-9]+ clusters free, next write -28
+^fsstress: after unlink all clusters back
+^fsstress: cleanup -> free clusters equal \([0-9]+, start [0-9]+\); fs stress ok

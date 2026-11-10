@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 25 session; plan Days 1–27 done, re-plan sessions 12–25 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 26 session; plan Days 1–27 done, re-plan sessions 12–26 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -132,6 +132,10 @@ Working:
   memory, FAT = clusters), `sync` (flush FAT + disk caches), `lspci`, `lsblk` (disks,
   size, model, mount point), `hexdump [-n LEN] [-s OFF] [file]` (canonical hex+ASCII,
   repeated lines folded into `*`), `ls -l` (type, inode, size; directories show entries)
+- **FS stress** (Day 26): `fsstress [ops] [seed]` runs seeded random create/write-at/
+  append/unlink/rename/read on `/disk` against a RAM model, fills the disk until
+  `write` returns `-ENOSPC`, and checks every cluster comes back; the host then runs
+  `fatimg fsck` on the image
 - **exec** (`exec(path, argv)`): replaces the program of the calling process in place
   (same pid, parent, children, process group, fds and cwd). The new image is built in a
   fresh address space first, so a failed exec returns with nothing changed; the FPU state
