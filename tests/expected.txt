@@ -229,3 +229,23 @@ user fault: pid [0-9]+ 'mmap': page fault \(vector 14, error 7\) at rip [0-9a-f]
 ^forktest: value 3, cow fork ok
 # Day 23: tsh starts programs with fork+exec (mem shows the shell's forks; no COW sharing left over)
 ^fork: [1-9][0-9]* forks, [0-9]+ pages shared, [0-9]+ copied, [0-9]+ reused, 0 frames shared now
+# Day 25: df, sync, lspci, lsblk, hexdump, ls -l (from shtest.sh)
+^Type    Size\(KiB\)  Used\(KiB\) Avail\(KiB\) Use%  Mounted on
+^ramfs +[1-9][0-9]+ +[0-9]+ +[1-9][0-9]+ +[0-9]+%  /[[:space:]]*$
+^fat16 +40[0-9][0-9] +1[0-9][0-9] +3[0-9]{3} +[0-9]%  /disk[[:space:]]*$
+^fat16 +40[0-9][0-9] +2[0-9][0-9] +3[0-9]{3} +[0-9]%  /disk[[:space:]]*$
+^sync: 1 volume flushed
+^00:1f\.2 8086:2922 class 010601 sata +irq [0-9]+
+^lspci: [1-9][0-9]* devices
+^disk[0-9] +[0-9]+ +8192 4096 K  QEMU HARDDISK +/disk[[:space:]]*$
+^lsblk: [1-9][0-9]* disks?
+^00000000  68 65 6c 6c 6f 2c 20 74  65 72 6e 6f 73 0a        \|hello, ternos\.\|
+^0000000e[[:space:]]*$
+^00000010  02 00 3e 00                                       \|\.\.>\.\|
+^00000004  6f 20 66 72                                       \|o fr\|
+^\*[[:space:]]*$
+^00000040[[:space:]]*$
+^- +[0-9]+ +100000  big\.bin[[:space:]]*$
+^d +[0-9]+ +[0-9]+  docs/[[:space:]]*$
+^total [0-9]+ entries, [0-9]+ bytes
+^- +[0-9]+ +59  /etc/motd[[:space:]]*$

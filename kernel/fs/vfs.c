@@ -6,6 +6,8 @@
 #include "string.h"
 #include "kernel.h"
 #include "kprintf.h"
+#include "pmm.h"
+#include "mm.h"
 
 static struct mutex vfs_lock;
 static struct vnode *root;
@@ -494,4 +496,29 @@ void vfs_get_stats(struct vfs_stats *s) {
     s->nodes = live_nodes;
     s->file_bytes = file_bytes;
     mutex_unlock(&vfs_lock);
+}
+
+/* Day 25: statfs / sync. RAM nodes report physical memory (the RAM FS lives in the
+ * kernel heap), FAT nodes their volume's clusters. */
+int vfs_statfs(struct vnode *v, struct tern_statfs *st) {
+    memset(st, 0, sizeof *st);
+    mutex_lock(&vfs_lock);
+    bool fat = fat_statfs_locked(v, st);
+    if (!fat) {
+        memcpy(st->fstype, "ramfs", 6);
+        memcpy(st->mount, "/", 2);
+        st->bsize = PAGE_SIZE;
+        st->blocks = pmm_total_frames();
+        st->bfree = pmm_free_frames();
+        st->files = live_nodes;
+    }
+    mutex_unlock(&vfs_lock);
+    return 0;
+}
+
+int vfs_sync(void) {
+    mutex_lock(&vfs_lock);
+    int rc = fat_sync_all_locked();
+    mutex_unlock(&vfs_lock);
+    return rc;
 }

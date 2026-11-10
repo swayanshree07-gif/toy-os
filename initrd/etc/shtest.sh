@@ -138,6 +138,21 @@ status
 forktest
 status
 mem
+# Day 25: system information programs
+df
+seq 1 20000 > /disk/dfbig.txt
+df /disk
+sync
+rm /disk/dfbig.txt
+df /disk/hello.txt /dev/null
+lspci
+lsblk
+echo hello, ternos | hexdump
+hexdump -n 20 /bin/echo
+hexdump -s 4 -n 4 /disk/hello.txt
+hexdump /dev/zero -n 64
+ls -l /disk
+ls -l /etc/motd
 ls /disk
 cat /disk/hello.txt
 cp /disk/hello.txt /hcopy

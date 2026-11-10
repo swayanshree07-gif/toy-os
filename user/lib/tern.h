@@ -67,6 +67,10 @@ static inline int rename(const char *a, const char *b)    { return (int)SC2(SYS_
 static inline int fbinfo(struct tern_fbinfo *fi)          { return (int)SC1(SYS_fbinfo, fi); }
 static inline int fbacquire(int on)                       { return (int)SC1(SYS_fbacquire, on); }
 static inline int fbblit(const struct tern_fbblit *b)     { return (int)SC1(SYS_fbblit, b); }
+static inline int statfs(const char *p, struct tern_statfs *s) { return (int)SC2(SYS_statfs, p, s); }
+static inline int sync(void)                              { return (int)SC0(SYS_sync); }
+static inline int pcilist(struct tern_pcidev *b, unsigned max) { return (int)SC2(SYS_pcilist, b, max); }
+static inline int blklist(struct tern_blkdev *b, unsigned max) { return (int)SC2(SYS_blklist, b, max); }
 static inline int poweroff(void)                          { return (int)SC0(SYS_poweroff); }
 /* write all of buf (pipes may take it in pieces); bytes written or the error */
 static inline long write_all(int fd, const void *b, size_t n) {

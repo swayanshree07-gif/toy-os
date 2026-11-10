@@ -108,7 +108,8 @@ int main(int argc, char **argv) {
         case SYS_fbinfo: a = to_out(a); break;
         case SYS_getcwd: case SYS_sysinfo: case SYS_proclist: case SYS_pipe:
             a = to_out(a); break;
-        case SYS_stat: b = to_out(b); break;
+        case SYS_stat: case SYS_statfs: b = to_out(b); break;
+        case SYS_pcilist: case SYS_blklist: a = to_out(a); b %= 16; break;
         default: break;
         }
         long r = raw3(nr, a, b, c);

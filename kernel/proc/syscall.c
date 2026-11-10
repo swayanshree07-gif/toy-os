@@ -16,6 +16,8 @@
 #include "fbdev.h"
 #include "acpi.h"
 #include "io.h"
+#include "pci.h"
+#include "ahci.h"
 
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -319,6 +321,61 @@ static long sys_getcwd(uint64_t ubuf, uint64_t size) {
     return n;
 }
 
+static long sys_statfs(uint64_t upath, uint64_t ust) {
+    char path[VFS_PATH_MAX];
+    int rc = copy_user_str(path, upath, sizeof path);
+    if (rc) return rc;
+    if (!user_ok(ust, sizeof(struct tern_statfs), true)) return -EFAULT;
+    struct vnode *v = vfs_lookup(proc_current()->cwd, path, &rc);
+    if (!v) return rc;
+    struct tern_statfs st;
+    vfs_statfs(v, &st);
+    vfs_put(v);
+    memcpy((void *)ust, &st, sizeof st);
+    return 0;
+}
+
+static void copy_cstr(char *dst, const char *src, size_t size) {
+    size_t n = 0;
+    while (src && src[n] && n + 1 < size) { dst[n] = src[n]; n++; }
+    dst[n] = 0;
+}
+
+static long sys_pcilist(uint64_t ubuf, uint64_t max) {
+    int n = pci_count();
+    uint64_t fill = (uint64_t)n < max ? (uint64_t)n : max;
+    if (fill > 256) fill = 256;
+    if (fill && !user_ok(ubuf, fill * sizeof(struct tern_pcidev), true)) return -EFAULT;
+    for (uint64_t i = 0; i < fill; i++) {
+        const struct pci_dev *d = pci_get((int)i);
+        struct tern_pcidev o;
+        memset(&o, 0, sizeof o);
+        o.bus = d->bus; o.dev = d->dev; o.fn = d->fn;
+        o.class_code = d->class_code; o.subclass = d->subclass; o.prog_if = d->prog_if;
+        o.irq = d->irq_line; o.vendor = d->vendor; o.device = d->device;
+        copy_cstr(o.kind, pci_class_name(d->class_code, d->subclass), sizeof o.kind);
+        memcpy((struct tern_pcidev *)ubuf + i, &o, sizeof o);
+    }
+    return n;
+}
+
+static long sys_blklist(uint64_t ubuf, uint64_t max) {
+    int n = ahci_disk_count();
+    uint64_t fill = (uint64_t)n < max ? (uint64_t)n : max;
+    if (fill > 64) fill = 64;
+    if (fill && !user_ok(ubuf, fill * sizeof(struct tern_blkdev), true)) return -EFAULT;
+    for (uint64_t i = 0; i < fill; i++) {
+        const struct ahci_disk *d = ahci_disk_get((int)i);
+        struct tern_blkdev o;
+        memset(&o, 0, sizeof o);
+        o.index = (uint32_t)i; o.port = (uint32_t)d->port; o.sectors = d->sectors;
+        copy_cstr(o.model, d->model, sizeof o.model);
+        copy_cstr(o.mount, fat_mount_of_disk((int)i), sizeof o.mount);
+        memcpy((struct tern_blkdev *)ubuf + i, &o, sizeof o);
+    }
+    return n;
+}
+
 static long sys_sysinfo(uint64_t uinfo) {
     if (!user_ok(uinfo, sizeof(struct tern_sysinfo), true)) return -EFAULT;
     struct tern_sysinfo si;
@@ -471,6 +528,10 @@ static long syscall_do(struct regs *r) {
     case SYS_poweroff:  return sys_poweroff();
     case SYS_exec:      return sys_exec(a0, a1, r);
     case SYS_fork:      return proc_fork(r);
+    case SYS_statfs:    return sys_statfs(a0, a1);
+    case SYS_sync:      return vfs_sync();
+    case SYS_pcilist:   return sys_pcilist(a0, a1);
+    case SYS_blklist:   return sys_blklist(a0, a1);
     case SYS_dup:       return sys_dup(a0, 0, false);
     case SYS_dup2:      return sys_dup(a0, a1, true);
     default:            return -ENOSYS;

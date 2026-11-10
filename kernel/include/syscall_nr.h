@@ -74,7 +74,12 @@
                                gets a copy-on-write copy of the address space, the same
                                open files (shared offsets), cwd, brk, mmap regions and
                                process group; fresh FPU state */
-#define SYS_COUNT     39
+/* Day 25: file system and device information */
+#define SYS_statfs    39    /* statfs(path, struct tern_statfs *) -> 0 */
+#define SYS_sync      40    /* sync() -> number of disk volumes flushed (FAT + disk cache) */
+#define SYS_pcilist   41    /* pcilist(struct tern_pcidev *buf, max) -> devices (fills <= max) */
+#define SYS_blklist   42    /* blklist(struct tern_blkdev *buf, max) -> disks (fills <= max) */
+#define SYS_COUNT     43
 #define TERN_WNOHANG  1
 #define PROC_MAX_LIVE 64    /* spawn fails with -EAGAIN beyond this many processes */
 #define TERN_EXIT_INTR   130   /* killed by Ctrl-C */
@@ -165,6 +170,25 @@ struct tern_fbblit {
     uint32_t x, y, w, h;         /* destination rectangle, must lie inside the screen */
     uint32_t stride;             /* bytes, >= 4 * w */
     uint32_t reserved;
+};
+struct tern_statfs {
+    char fstype[8];          /* "ramfs" or "fat16" */
+    uint64_t bsize;          /* bytes per block (RAM: page, FAT: cluster) */
+    uint64_t blocks, bfree;  /* total / free blocks */
+    uint64_t files;          /* RAM: live nodes; FAT: disk number */
+    char mount[24];          /* mount point ("/" or "/disk") */
+};
+struct tern_pcidev {
+    uint8_t bus, dev, fn, class_code, subclass, prog_if, irq, reserved;
+    uint16_t vendor, device;
+    uint32_t reserved2;
+    char kind[16];           /* class name, e.g. "sata" */
+};
+struct tern_blkdev {
+    uint32_t index, port;    /* disk number, AHCI port */
+    uint64_t sectors;        /* 512-byte sectors */
+    char model[41];
+    char mount[23];          /* where a FAT volume on it is mounted, or "" */
 };
 #define TERN_PS_RUNNING  0
 #define TERN_PS_READY    1

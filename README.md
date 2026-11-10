@@ -3,7 +3,7 @@
 TernOS is an original hobby operating system for x86-64, written from scratch in C and
 assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for the daily log).
 
-## Status (Day 24 session; plan Days 1–27 done, re-plan sessions 12–24 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
+## Status (Day 25 session; plan Days 1–27 done, re-plan sessions 12–25 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
 ![demo](docs/demo.png)
 
@@ -128,6 +128,10 @@ Working:
   `printf`/`snprintf`, `malloc`/`free`/`calloc`/`realloc` on top of a `brk` system call.
   Test programs: `hello`, `fstest`, `ulibtest`, `segv`, `spawntest`, `child`, `ttytest`,
   `killtest`, `fputest`
+- **System tools** (Day 25): `df [paths]` (system call `statfs`: RAM FS = physical
+  memory, FAT = clusters), `sync` (flush FAT + disk caches), `lspci`, `lsblk` (disks,
+  size, model, mount point), `hexdump [-n LEN] [-s OFF] [file]` (canonical hex+ASCII,
+  repeated lines folded into `*`), `ls -l` (type, inode, size; directories show entries)
 - **exec** (`exec(path, argv)`): replaces the program of the calling process in place
   (same pid, parent, children, process group, fds and cwd). The new image is built in a
   fresh address space first, so a failed exec returns with nothing changed; the FPU state

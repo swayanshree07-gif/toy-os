@@ -28,7 +28,11 @@ struct fatfs {
     uint16_t *fat;                   /* nclusters + 2 entries */
     uint8_t cache[512];
     uint64_t cache_lba;              /* UINT64_MAX = empty */
+    char mount[24];
 };
+#define FAT_MAX_MOUNTS 4
+static struct fatfs *mounts[FAT_MAX_MOUNTS];
+static int nmounts;
 /* priv of every vnode under the mount point (files and directories). For directories
  * first = 0 means the fixed root region. ent_lba/ent_off locate the 32-byte directory
  * entry (unused for the root). dead: unlinked, the clusters are gone. */
@@ -695,7 +699,34 @@ int fat_mount(int disk, const char *path) {
     if (rc >= 0) { int a = attach_dir(fs, path, 0, 0, 0, NULL, 0); if (a) rc = a; }
     if (rc >= 0) stats.free_clusters = count_free(fs);
     if (rc < 0) { kfree(fs->fat); kfree(fs); return rc; }
+    size_t ml = strlen(path) < sizeof fs->mount - 1 ? strlen(path) : sizeof fs->mount - 1;
+    memcpy(fs->mount, path, ml);
+    if (nmounts < FAT_MAX_MOUNTS) mounts[nmounts++] = fs;
     kprintf("fat: disk %d mounted at %s: FAT16, %u clusters of %u bytes, %d files\n",
             disk, path, fs->nclusters, fs->spc * 512, rc);
     return rc;   /* fs lives as long as the kernel (no unmount) */
+}
+
+bool fat_statfs_locked(struct vnode *v, struct tern_statfs *st) {
+    if (v->ops != &fat_file_ops && v->ops != &fat_dir_ops) return false;
+    struct fatfs *fs = ((struct fatfile *)v->priv)->fs;
+    memcpy(st->fstype, "fat16", 6);
+    memcpy(st->mount, fs->mount, sizeof st->mount);
+    st->bsize = fs->spc * 512u;
+    st->blocks = fs->nclusters;
+    st->bfree = count_free(fs);
+    st->files = (uint64_t)fs->disk;
+    return true;
+}
+
+int fat_sync_all_locked(void) {
+    for (int i = 0; i < nmounts; i++)
+        if (fat_sync(mounts[i])) return -EIO;
+    return nmounts;
+}
+
+const char *fat_mount_of_disk(int disk) {
+    for (int i = 0; i < nmounts; i++)
+        if (mounts[i]->disk == disk) return mounts[i]->mount;
+    return NULL;
 }

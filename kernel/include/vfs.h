@@ -134,6 +134,12 @@ int fat_mount(int disk, const char *path);
 int fat_find_disk(void);       /* first AHCI disk with a FAT16 boot sector, or -ENODEV */
 struct fat_stats { uint64_t sector_reads, cache_hits, sector_writes, free_clusters; };
 void fat_get_stats(struct fat_stats *s);
+/* Day 25. Called with the VFS lock held (through vfs_statfs / vfs_sync). */
+bool fat_statfs_locked(struct vnode *v, struct tern_statfs *st);   /* false: not FAT */
+int fat_sync_all_locked(void);               /* volumes flushed or -EIO */
+const char *fat_mount_of_disk(int disk);     /* mount path or NULL */
+int vfs_statfs(struct vnode *v, struct tern_statfs *st);
+int vfs_sync(void);
 
 void test_vfs(void);
 
