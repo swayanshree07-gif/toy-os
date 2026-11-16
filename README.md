@@ -5,6 +5,12 @@ assembly as a 30-day project (see `PLAN.md` for the roadmap, `PROGRESS.md` for t
 
 ## Status (Day 30, project complete: plan Days 1–30 done, re-plan sessions 12–27 done; Days 22–27 re-planned for the extended goals, see PLAN.md)
 
+![TernOS session](docs/media/session.gif)
+
+*A real headless boot (OVMF → GRUB → TernOS), recorded with QEMU `screendump` every 0.25 s by
+`tools/mkmedia.sh`: the boot log, `ls`/`cat`/`echo >` on the FAT16 disk, a pipe into `wc`,
+`ps`, then `/bin/demo` drawing straight to the framebuffer from ring 3.*
+
 ![demo](docs/demo.png)
 
 *`/bin/demo` ("tern flight") running from the boot ISO, captured with QEMU's `screendump` by `make test`.*
@@ -252,6 +258,42 @@ assembly are declared in `kernel/include/entry.h`.
 tools/screenshot.sh [out.png]   # boots headless and saves a PNG of the screen
 ```
 
+### Architecture at a glance
+
+```mermaid
+flowchart TB
+  subgraph U["Ring 3 (per-process address space)"]
+    tsh["tsh shell"] --> progs["cat · ls · echo · wc · ps · ted · demo …"]
+    progs --> ulib["user/lib: crt0, ulib, malloc"]
+  end
+  ulib -- "syscall / sysret" --> sc["proc/syscall.c"]
+  subgraph K["Kernel (higher half, ring 0)"]
+    sc --> proc["proc: processes, fds, ELF loader, fork"]
+    sc --> vfs["fs/vfs: RAM FS tree, pipes, devfs"]
+    proc --> sched["sched: preemptive threads, wait queues"]
+    proc --> mm["mm: pmm frames · vmm 4-level paging · kmalloc"]
+    vfs --> initrd["initrd (TRD archive)"]
+    vfs --> fat["fat.c: FAT16 read/write"]
+    fat --> ahci["drivers/ahci"]
+    sched --> pit["PIT / LAPIC timer IRQ"]
+    tty["tty line discipline"] --> vfs
+    kbd["PS/2 keyboard IRQ"] --> tty
+    con["fb console + serial"]
+  end
+  pit & kbd --> idt["arch: GDT/TSS, IDT, PIC/APIC"]
+  ahci --> disk[("disk image (tools/fatimg.py)")]
+```
+
+### Boot pipeline
+
+```mermaid
+flowchart LR
+  A[OVMF UEFI] --> B[GRUB 2 x86_64-efi] --> C["Multiboot2 → boot.S<br/>32-bit stub"]
+  C --> D["long mode +<br/>higher-half jump"] --> E["kmain: serial, mb2 info,<br/>GDT/IDT, pmm, vmm, heap"]
+  E --> F["ACPI/APIC, PCI,<br/>AHCI, FAT mount"] --> G["initrd → VFS,<br/>scheduler, keyboard"]
+  G --> H["exec /bin/tsh<br/>in ring 3"]
+```
+
 ### How booting works here
 
 This machine only has GRUB for x86_64-efi (no BIOS `i386-pc` modules), so everything boots
@@ -276,6 +318,11 @@ so every boot (`make run`, `make test`, `tools/screenshot.sh`) uses a throwaway 
 | `0xFFFFFFFF80100000` | kernel image (physical 1 MiB) |
 
 ## Tests
+
+![test timings](docs/media/test-times.png)
+
+*Real `make test` run: each bar is one headless QEMU boot under `timeout`, labelled with the
+number of serial markers it checked (`tools/plot_tests.py`).*
 
 `make test` builds a second EFI image whose GRUB config passes `test` on the kernel command
 line. In test mode the kernel runs its self-checks, prints `[TEST] ...` markers on COM1 and
@@ -347,6 +394,17 @@ panic two calls deep must print a backtrace naming every caller.
 
 ## Layout
 
+```mermaid
+flowchart LR
+  root((toy-os)) --> kernel["kernel/ — arch, drivers, mm, sched, proc, fs, tty"]
+  root --> user["user/ — libc-lite + ~45 programs in bin/"]
+  root --> boot["boot/ — grub.cfg template"]
+  root --> initrd["initrd/ — files packed into the boot archive"]
+  root --> tools["tools/ — font, initrd, FAT image, symbols, demo + media scripts"]
+  root --> tests["tests/ — headless QEMU runner + expected markers"]
+  root --> docs["docs/ — ARCHITECTURE.md, screenshots, media/"]
+```
+
 ```
 kernel/arch/x86_64/   boot.S (Multiboot2 header, long-mode switch), GDT/TSS, IDT + isr.S stubs,
                       switch.S (context switch), usermode.S (iretq to ring 3, syscall entry), acpi.c (RSDP/XSDT/MADT), apic.c (LAPIC, I/O APIC)
@@ -370,6 +428,7 @@ initrd/               files packed into the initrd image (etc/motd, etc/shtest.s
 user/                 user space: linker.ld, lib/ (crt0, tern.h, ulib.c, malloc.c), bin/ (programs)
 tools/                checkdocs.py (docs vs. code check), font source + generator, mksyms.py (symbol table), mkinitrd.py, screenshot
                       script, ppmstat.py (screenshot checks)
-docs/                 ARCHITECTURE.md (design, memory map, syscalls, how-tos), screenshots
+docs/                 ARCHITECTURE.md (design, memory map, syscalls, how-tos), screenshots,
+                      media/ (GIF + chart made by tools/mkmedia.sh and tools/plot_tests.py)
 tests/                headless test runner and expected markers
 ```
